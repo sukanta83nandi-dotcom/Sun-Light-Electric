@@ -1,0 +1,10 @@
+{
+  "name": "Remix Sun Light Electric Plan \u0026 App",
+  "description": "Technical Architecture Plan and Interactive Application for Sun Light Electric Solar Management System",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

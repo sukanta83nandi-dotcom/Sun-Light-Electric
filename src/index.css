@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@keyframes rainbow-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-rainbow-text {
+  background: linear-gradient(
+    90deg,
+    #ff2a6d,
+    #ffb000,
+    #05d522,
+    #00f0ff,
+    #7000ff,
+    #ff00a0,
+    #ff2a6d
+  );
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: rainbow-shift 3s ease infinite;
+}
+
+@keyframes icon-blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+svg, .lucide {
+  animation: icon-blink 1.8s ease-in-out infinite;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  15%, 55%, 85% { transform: translateX(-6px); }
+  30%, 70% { transform: translateX(6px); }
+}
+
+.animate-shake {
+  animation: shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
