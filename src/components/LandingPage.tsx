@@ -89,7 +89,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       ctaButton: 'bg-gradient-to-r from-amber-600 via-amber-700 to-amber-900 hover:from-amber-500 hover:to-amber-800 text-white font-extrabold shadow-amber-950/20',
       inputBg: 'bg-amber-50/60 border-amber-200 text-amber-950 placeholder-amber-400 focus:ring-amber-500',
       themeBanner: 'bg-amber-500/15 text-amber-900 border-amber-300/80',
-      themeIcon: <Sun className="w-3.5 h-3.5 text-amber-600 animate-spin" />,
       themeLabel: 'Solar Gold Theme Active',
     },
     // 2. LIGHT: Clean Sky Blue & Deep Ocean Teal Theme
@@ -113,7 +112,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       ctaButton: 'bg-gradient-to-r from-[#02495c] to-[#013542] hover:from-[#035b73] hover:to-[#024454] text-white font-bold shadow-sky-950/20',
       inputBg: 'bg-slate-50 border-slate-200 text-slate-800 placeholder-slate-400 focus:ring-[#025368]',
       themeBanner: 'bg-sky-50 text-sky-800 border-sky-200',
-      themeIcon: <Contrast className="w-3.5 h-3.5 text-sky-600" />,
       themeLabel: 'Sky Blue Light Theme Active',
     },
     // 3. DARK: Midnight Obsidian & Cyber Emerald Theme
@@ -137,7 +135,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       ctaButton: 'bg-gradient-to-r from-[#0d9488] to-[#0f766e] hover:from-[#14b8a6] hover:to-[#115e59] text-white font-bold shadow-teal-950/40',
       inputBg: 'bg-slate-800 border-slate-700 text-slate-100 placeholder-slate-400 focus:ring-teal-500',
       themeBanner: 'bg-teal-950/80 text-teal-300 border-teal-800/80',
-      themeIcon: <Moon className="w-3.5 h-3.5 text-teal-400" />,
       themeLabel: 'Midnight Obsidian Theme Active',
     }
   };
@@ -150,7 +147,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       {/* Theme Indicator Banner */}
       <div className="mb-3">
         <div className={`inline-flex items-center gap-2 px-3.5 py-1 rounded-full border text-xs font-bold transition-all shadow-xs ${t.themeBanner}`}>
-          {t.themeIcon}
+          {activeTheme === 'dark' ? (
+            <Moon className="w-3.5 h-3.5 text-teal-400" />
+          ) : activeTheme === 'light' ? (
+            <Contrast className="w-3.5 h-3.5 text-sky-600" />
+          ) : (
+            <Sun className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+          )}
           <span>{t.themeLabel}</span>
         </div>
       </div>

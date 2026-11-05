@@ -35,8 +35,6 @@ export const StockLogModal: React.FC<StockLogModalProps> = ({
   stockLogs,
   onAddStockLog,
 }) => {
-  if (!item) return null;
-
   // Filter States
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'INWARD' | 'OUTWARD' | 'ADJUSTMENT'>('ALL');
@@ -77,8 +75,9 @@ export const StockLogModal: React.FC<StockLogModalProps> = ({
 
   // Filtered Logs for this SKU item code
   const itemLogs = useMemo(() => {
+    if (!item?.code) return [];
     return stockLogs.filter((log) => log.itemCode === item.code);
-  }, [stockLogs, item.code]);
+  }, [stockLogs, item?.code]);
 
   const filteredLogs = useMemo(() => {
     return itemLogs.filter((log) => {
@@ -115,6 +114,8 @@ export const StockLogModal: React.FC<StockLogModalProps> = ({
       .filter((l) => l.type === 'OUTWARD' || (l.type === 'ADJUSTMENT' && l.quantity < 0))
       .reduce((acc, l) => acc + Math.abs(l.quantity), 0);
   }, [filteredLogs]);
+
+  if (!item) return null;
 
   const currentStock = item.currentStock ?? item.stockLevel ?? 0;
 
