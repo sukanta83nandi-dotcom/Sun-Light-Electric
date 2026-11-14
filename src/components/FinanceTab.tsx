@@ -1630,11 +1630,16 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
 
             {/* Printable Voucher Body */}
             <div className="p-4 sm:p-6 overflow-y-auto max-h-[82vh] bg-slate-800">
-              <div className="finance-voucher-printable bg-white text-slate-900 border border-slate-300 rounded-xl p-6 sm:p-8 max-w-3xl mx-auto shadow-xl relative font-sans text-xs">
+              <div className="finance-voucher-printable bg-white text-slate-900 border border-slate-300 rounded-xl p-6 sm:p-8 max-w-3xl mx-auto shadow-xl relative overflow-hidden font-sans text-xs">
+                {/* Centered Background Watermark */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 select-none overflow-hidden">
+                  <CompanyLogo variant="watermark" className="w-72 h-72 object-contain" />
+                </div>
+
                 {/* Header Row */}
-                <div className="flex flex-col sm:flex-row justify-between items-start border-b-2 border-slate-900 pb-4 mb-4 gap-4">
+                <div className="relative z-10 flex flex-col sm:flex-row justify-between items-start border-b-2 border-slate-900 pb-4 mb-4 gap-4">
                   <div className="flex items-center gap-4">
-                    <CompanyLogo className="h-14 w-auto object-contain shrink-0" />
+                    <CompanyLogo className="h-14 w-auto max-w-[140px] object-contain shrink-0" />
                     <div>
                       <h1 className="text-xl font-black text-amber-600 tracking-tight">
                         {COMPANY_CREDENTIALS.companyName}

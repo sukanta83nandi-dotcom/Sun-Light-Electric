@@ -14,6 +14,7 @@ import {
   Contrast
 } from 'lucide-react';
 import { ForgotPasswordModal } from './ForgotPasswordModal';
+import { CompanyLogo } from './CompanyLogo';
 import { AppThemeMode } from '../types';
 
 interface LandingPageProps {
@@ -171,8 +172,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           {/* Top Brand Header */}
           <div className="relative z-10">
             <div className="flex items-center gap-3.5">
-              <div className={`w-12 h-12 rounded-2xl ${t.logoBoxBg} p-2 flex items-center justify-center shadow-inner`}>
-                <SunMedium className={`w-7 h-7 ${t.logoIconColor} stroke-[2.2]`}/>
+              <div className={`h-12 min-w-[48px] max-w-[120px] rounded-2xl ${t.logoBoxBg} border p-1.5 flex items-center justify-center shadow-inner overflow-hidden`}>
+                <CompanyLogo className="h-9 w-auto max-w-[104px] object-contain" />
               </div>
               <div>
                 <div className="flex items-center gap-2">

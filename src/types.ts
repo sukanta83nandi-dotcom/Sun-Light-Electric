@@ -34,21 +34,53 @@ export interface ClientDocument {
   mimeType?: string;
 }
 
+export interface FieldChange {
+  field: string;
+  oldValue: string;
+  newValue: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  action: 'CREATED' | 'UPDATED' | 'IMPORTED';
+  timestamp: string;
+  isoTimestamp?: string;
+  performedBy: string;
+  changes?: FieldChange[];
+}
+
 export interface Customer {
   id: string;
   name: string;
+  contactPerson?: string;
+  lastInvoiceDate?: string;
+  code?: string;
+  siteSurveyRequired?: 'Required' | 'Not Required';
   phone: string;
   email?: string;
+  spocEmail?: string;
+  financeEmail?: string;
   address: string;
   city?: string;
+  district?: string;
   state: string;
   stateCode: string;
   pinCode: string;
   pincode?: string;
+  locationType?: 'Within State' | 'Out of State';
+  currency?: string;
   category: 'Domestic' | 'Commercial';
+  creditPeriodDays?: string;
+  termsOfPayment?: string;
+  dispatchThrough?: string;
+  termsOfDelivery?: string;
+  tds?: string;
+  gstNoRequired?: 'Yes' | 'No';
   gstin?: string;
+  panNumber?: string;
   status: 'active' | 'inactive';
   documents?: ClientDocument[];
+  auditHistory?: AuditLogEntry[];
 }
 
 export type Client = Customer;

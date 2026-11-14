@@ -1,5 +1,11 @@
 import { utils, read, writeFile } from 'xlsx';
 import { Supplier } from '../types/supplier';
+import {
+  createAuditEntry,
+  diffSupplierFields,
+  ensureInitialAuditHistory,
+  DEFAULT_AUDIT_USER,
+} from './auditHelper';
 
 /**
  * Export supplier list to Excel file (.xlsx)
@@ -28,6 +34,7 @@ export const exportSuppliersToExcel = (
     'Bank Account No': s.bankDetails?.accountNo || '',
     'Bank IFSC Code': s.bankDetails?.ifscCode || '',
     'Balance Payable (₹)': s.balancePayable ?? 0,
+    'Status': (s.status || 'active') === 'inactive' ? 'Inactive' : 'Active',
   }));
 
   const worksheet = utils.json_to_sheet(exportData);
@@ -47,6 +54,7 @@ export const exportSuppliersToExcel = (
     { wch: 22 }, // Bank Account No
     { wch: 16 }, // Bank IFSC Code
     { wch: 20 }, // Balance Payable (₹)
+    { wch: 12 }, // Status
   ];
 
   const workbook = utils.book_new();
@@ -74,6 +82,7 @@ export const downloadSupplierExcelTemplate = () => {
       'Bank Account No': '31098234561',
       'Bank IFSC Code': 'SBIN0000001',
       'Balance Payable (₹)': 50000,
+      'Status': 'Active',
     },
     {
       'Supplier Code': 'SUP-2026-011',
@@ -90,6 +99,7 @@ export const downloadSupplierExcelTemplate = () => {
       'Bank Account No': '50200012984512',
       'Bank IFSC Code': 'HDFC0000120',
       'Balance Payable (₹)': 0,
+      'Status': 'Active',
     },
   ];
 
@@ -109,6 +119,7 @@ export const downloadSupplierExcelTemplate = () => {
     { wch: 20 },
     { wch: 16 },
     { wch: 20 },
+    { wch: 12 },
   ];
 
   const workbook = utils.book_new();
@@ -203,6 +214,10 @@ export const importSuppliersFromExcel = async (
           const balanceRaw = getVal(['Balance Payable (₹)', 'Balance Payable', 'Outstanding Dues', 'Balance', 'Payable', 'Due']);
           const balancePayable = balanceRaw ? parseFloat(balanceRaw.replace(/[^0-9.-]/g, '')) || 0 : 0;
 
+          const statusRaw = getVal(['Status', 'Supplier Status', 'Active']).toLowerCase();
+          const parsedStatus: 'active' | 'inactive' | undefined =
+            statusRaw === 'inactive' ? 'inactive' : statusRaw === 'active' ? 'active' : undefined;
+
           let supplierCode = getVal(['Supplier Code', 'Code', 'SUP Code', 'Vendor Code']);
 
           // Validation: Company name is required
@@ -222,7 +237,7 @@ export const importSuppliersFromExcel = async (
           if (existingIdx !== -1) {
             // Update existing supplier record
             const current = updatedList[existingIdx];
-            updatedList[existingIdx] = {
+            const mergedSupplier: Supplier = {
               ...current,
               companyName: companyName || current.companyName,
               contactPerson: contactPerson || current.contactPerson,
@@ -239,6 +254,16 @@ export const importSuppliersFromExcel = async (
                 ifscCode: ifscCode || current.bankDetails?.ifscCode || '',
               },
               balancePayable: balancePayable !== undefined && !isNaN(balancePayable) ? balancePayable : current.balancePayable,
+              status: parsedStatus ?? current.status ?? 'active',
+            };
+            const baseHistory = ensureInitialAuditHistory(current.auditHistory, DEFAULT_AUDIT_USER);
+            const changes = diffSupplierFields(current, mergedSupplier);
+            updatedList[existingIdx] = {
+              ...mergedSupplier,
+              auditHistory:
+                changes.length > 0
+                  ? [...baseHistory, createAuditEntry('UPDATED', DEFAULT_AUDIT_USER, changes)]
+                  : baseHistory,
             };
             updatedCount += 1;
           } else {
@@ -265,6 +290,8 @@ export const importSuppliersFromExcel = async (
                 ifscCode: ifscCode || '',
               },
               balancePayable,
+              status: parsedStatus ?? 'active',
+              auditHistory: [createAuditEntry('IMPORTED', DEFAULT_AUDIT_USER)],
             };
 
             updatedList.push(newSupplier);

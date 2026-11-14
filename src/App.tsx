@@ -5,6 +5,7 @@ import { DemoApp } from './components/DemoApp';
 import { LandingPage } from './components/LandingPage';
 import { Sun, ShieldCheck } from 'lucide-react';
 import { CompanyLogo } from './components/CompanyLogo';
+import { CompanyBrandProvider } from './context/CompanyBrandContext';
 
 export default function App() {
   const [lang] = useState<Language>('en');
@@ -108,7 +109,41 @@ export default function App() {
   // Screen 1: Default Initial View (Landing Page)
   if (!isAuthenticated) {
     return (
-      <div className={`min-h-screen font-sans antialiased flex flex-col justify-between transition-colors duration-300 ${currentAppBg}`}>
+      <CompanyBrandProvider>
+        <div className={`min-h-screen font-sans antialiased flex flex-col justify-between transition-colors duration-300 ${currentAppBg}`}>
+          <Navbar
+            lang={lang}
+            isDarkMode={isDarkMode}
+            toggleDarkMode={toggleDarkMode}
+            currentTheme={appTheme}
+            onThemeChange={handleThemeChange}
+            userProfile={userProfile}
+            onToggleAuthPortal={() => setIsAuthenticated(false)}
+            isAuthenticated={false}
+          />
+          <main className="flex-1 flex items-center justify-center p-2 sm:p-4 lg:p-6 w-full max-w-7xl mx-auto">
+            <LandingPage
+              onLoginSuccess={handleLoginSuccess}
+              currentTheme={appTheme}
+              onThemeChange={handleThemeChange}
+            />
+          </main>
+          <footer className="bg-sky-950 text-sky-200/90 border-t border-sky-800/80 text-xs py-4 text-center">
+            <p className="text-sky-300/80 text-xs">
+              © {new Date().getFullYear()} Sun Light Electric • Powered by Solar SaaS
+            </p>
+          </footer>
+        </div>
+      </CompanyBrandProvider>
+    );
+  }
+
+  // Screen 2: Post-Login Application Workspace (Dashboard & Operations)
+  return (
+    <CompanyBrandProvider>
+      <div className={`min-h-screen font-sans antialiased flex flex-col justify-between selection:bg-amber-500 selection:text-slate-950 transition-colors duration-300 ${currentAppBg}`}>
+        
+        {/* Top Fixed Navbar */}
         <Navbar
           lang={lang}
           isDarkMode={isDarkMode}
@@ -116,76 +151,46 @@ export default function App() {
           currentTheme={appTheme}
           onThemeChange={handleThemeChange}
           userProfile={userProfile}
-          onToggleAuthPortal={() => setIsAuthenticated(false)}
-          isAuthenticated={false}
+          onLogout={handleLogout}
+          isAuthenticated={true}
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
         />
-        <main className="flex-1 flex items-center justify-center p-2 sm:p-4 lg:p-6 w-full max-w-7xl mx-auto">
-          <LandingPage
-            onLoginSuccess={handleLoginSuccess}
-            currentTheme={appTheme}
-            onThemeChange={handleThemeChange}
+
+        {/* Main Operations Command Center Workspace */}
+        <main className="flex-1">
+          <DemoApp
+            lang={lang}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
           />
         </main>
-        <footer className="bg-sky-950 text-sky-200/90 border-t border-sky-800/80 text-xs py-4 text-center">
-          <p className="text-sky-300/80 text-xs">
-            © {new Date().getFullYear()} Sun Light Electric • Powered by Solar SaaS
-          </p>
+
+        {/* Footer */}
+        <footer className="bg-sky-950 text-sky-200/90 border-t border-sky-800/80 text-xs py-6 mt-12 shadow-inner">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center space-x-2.5">
+              <CompanyLogo className="h-8 w-auto max-w-[110px] object-contain inline-block drop-shadow-sm" />
+              <span className="text-sky-300/80 hidden sm:inline">• Domestic &amp; Commercial Solar Panel Solutions</span>
+            </div>
+
+            <div className="flex items-center space-x-4 text-[11px] text-sky-200/90">
+              <span className="flex items-center gap-1.5 font-medium text-sky-100">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                Designed &amp; Developed by <strong className="animate-rainbow-text font-black tracking-wide text-xs">Sukanta Nandi</strong>
+              </span>
+              <span className="text-sky-700">|</span>
+              <span>Client / Owner: <span className="text-white font-semibold">Haradhan Patra</span></span>
+              <span className="flex items-center gap-1 text-emerald-400 font-mono text-[10px] font-semibold">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Production Engine Active</span>
+              </span>
+            </div>
+          </div>
         </footer>
+
       </div>
-    );
-  }
-
-  // Screen 2: Post-Login Application Workspace (Dashboard & Operations)
-  return (
-    <div className={`min-h-screen font-sans antialiased flex flex-col justify-between selection:bg-amber-500 selection:text-slate-950 transition-colors duration-300 ${currentAppBg}`}>
-      
-      {/* Top Fixed Navbar */}
-      <Navbar
-        lang={lang}
-        isDarkMode={isDarkMode}
-        toggleDarkMode={toggleDarkMode}
-        currentTheme={appTheme}
-        onThemeChange={handleThemeChange}
-        userProfile={userProfile}
-        onLogout={handleLogout}
-        isAuthenticated={true}
-        activeTab={activeTab}
-        onSelectTab={setActiveTab}
-      />
-
-      {/* Main Operations Command Center Workspace */}
-      <main className="flex-1">
-        <DemoApp
-          lang={lang}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-        />
-      </main>
-
-      {/* Footer */}
-      <footer className="bg-sky-950 text-sky-200/90 border-t border-sky-800/80 text-xs py-6 mt-12 shadow-inner">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center space-x-2.5">
-            <CompanyLogo className="h-8 w-auto inline-block drop-shadow-sm" />
-            <span className="text-sky-300/80 hidden sm:inline">• Domestic &amp; Commercial Solar Panel Solutions</span>
-          </div>
-
-          <div className="flex items-center space-x-4 text-[11px] text-sky-200/90">
-            <span className="flex items-center gap-1.5 font-medium text-sky-100">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-              Designed &amp; Developed by <strong className="animate-rainbow-text font-black tracking-wide text-xs">Sukanta Nandi</strong>
-            </span>
-            <span className="text-sky-700">|</span>
-            <span>Client / Owner: <span className="text-white font-semibold">Haradhan Patra</span></span>
-            <span className="flex items-center gap-1 text-emerald-400 font-mono text-[10px] font-semibold">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Production Engine Active</span>
-            </span>
-          </div>
-        </div>
-      </footer>
-
-    </div>
+    </CompanyBrandProvider>
   );
 }
 

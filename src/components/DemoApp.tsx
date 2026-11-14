@@ -11,7 +11,6 @@ import {
   StockLogEntry,
   ProjectExpenses,
   ClientDocument,
-  ClientDocumentCategory,
   ActiveTabType,
 } from '../types';
 import {
@@ -19,7 +18,6 @@ import {
   INITIAL_INVENTORY,
   INITIAL_DOCUMENTS,
   INITIAL_STOCK_LOGS,
-  INDIAN_STATES
 } from '../data/mockData';
 import { translations } from '../data/translations';
 
@@ -45,8 +43,9 @@ const OwnerApprovalModal = lazy(() => import('./OwnerApprovalModal').then(m => (
 const DeliveryChallanModal = lazy(() => import('./DeliveryChallanModal').then(m => ({ default: m.DeliveryChallanModal })));
 const EWayBillModal = lazy(() => import('./EWayBillModal').then(m => ({ default: m.EWayBillModal })));
 const CustomerDetailsModal = lazy(() => import('./CustomerDetailsModal').then(m => ({ default: m.CustomerDetailsModal })));
+const CustomerFormModal = lazy(() => import('./CustomerFormModal').then(m => ({ default: m.CustomerFormModal })));
+const AuditHistoryModal = lazy(() => import('./AuditHistoryModal').then(m => ({ default: m.AuditHistoryModal })));
 const DocumentViewerModal = lazy(() => import('./DocumentViewerModal').then(m => ({ default: m.DocumentViewerModal })));
-import { KYC_DOCUMENT_CATEGORIES, formatFileSize } from './CustomerDetailsModal';
 import { CompanyLogo } from './CompanyLogo';
 import { Supplier } from '../types/supplier';
 import { SupplierChallan, ChallanItem } from '../types/challan';
@@ -109,8 +108,22 @@ import {
 import { downloadDocumentPdf } from '../utils/pdfGenerator';
 import { getWhatsAppDeepLinks, sendPaymentDueReminderWhatsApp } from '../utils/whatsappHelper';
 import { exportGSTSalesCSV, filterInvoicesByPeriod } from '../utils/gstReportHelper';
-import { exportCustomersToExcel, importCustomersFromExcel } from '../utils/excelCustomerHelper';
+import {
+  downloadCustomerExcelTemplate,
+  exportCustomersToExcel,
+  importCustomersFromExcel,
+  deriveLocationType,
+  formatErpDate,
+  deriveClientCode,
+  formatFullAddress,
+} from '../utils/excelCustomerHelper';
 import { exportQuotationsToExcel } from '../utils/quotationExportHelper';
+import {
+  createAuditEntry,
+  diffCustomerFields,
+  ensureInitialAuditHistory,
+  DEFAULT_AUDIT_USER,
+} from '../utils/auditHelper';
 
 interface DemoAppProps {
   lang: Language;
@@ -353,7 +366,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
     if (!saved) return INITIAL_CUSTOMERS;
     try {
       const parsed: Customer[] = JSON.parse(saved);
-      return parsed.map((c) => ({ ...c, status: c.status || 'active' }));
+      return parsed.map((c) => ({
+        ...c,
+        status: c.status || 'active',
+        auditHistory: ensureInitialAuditHistory(c.auditHistory, DEFAULT_AUDIT_USER),
+      }));
     } catch {
       return INITIAL_CUSTOMERS;
     }
@@ -366,7 +383,12 @@ export const DemoApp: React.FC<DemoAppProps> = ({
     const saved = localStorage.getItem('sle_suppliers');
     if (!saved) return INITIAL_SUPPLIERS;
     try {
-      return JSON.parse(saved);
+      const parsed: Supplier[] = JSON.parse(saved);
+      return parsed.map((s) => ({
+        ...s,
+        status: s.status || 'active',
+        auditHistory: ensureInitialAuditHistory(s.auditHistory, DEFAULT_AUDIT_USER),
+      }));
     } catch {
       return INITIAL_SUPPLIERS;
     }
@@ -935,11 +957,37 @@ export const DemoApp: React.FC<DemoAppProps> = ({
   const [customerCategoryFilter, setCustomerCategoryFilter] = useState<'All' | 'Domestic' | 'Commercial'>('All');
   const [customerStatusFilter, setCustomerStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
 
-  // Customer Bulk Excel Import & Export
+  // Customer Bulk Excel Import, Template & Export
   const customerFileInputRef = React.useRef<HTMLInputElement>(null);
+  const [customerImportToast, setCustomerImportToast] = useState<{
+    message: string;
+    subtext?: string;
+    details?: string[];
+    isError?: boolean;
+  } | null>(null);
+
+  React.useEffect(() => {
+    if (!customerImportToast) return;
+    const timer = window.setTimeout(() => setCustomerImportToast(null), 7000);
+    return () => window.clearTimeout(timer);
+  }, [customerImportToast]);
+
+  const handleDownloadCustomerTemplate = () => {
+    downloadCustomerExcelTemplate();
+    setCustomerImportToast({
+      message: 'Excel template downloaded (SunLight_Electric_Customer_Template.xlsx).',
+      subtext: 'Fill customer rows on the "Customer Template" sheet and click Import Excel.',
+    });
+  };
 
   const handleCustomerExcelExport = () => {
-    exportCustomersToExcel(customers);
+    const exported = exportCustomersToExcel(customers);
+    if (!exported) {
+      setCustomerImportToast({
+        message: 'No customer records available to export.',
+        isError: true,
+      });
+    }
   };
 
   const handleCustomerExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -949,14 +997,31 @@ export const DemoApp: React.FC<DemoAppProps> = ({
     try {
       const result = await importCustomersFromExcel(file, customers);
       setCustomers(result.updatedCustomers);
-
-      let msg = `Bulk Customer Excel Import Complete:\n• Total Parsed: ${result.totalParsed}\n• New Customers Added: ${result.addedCount}\n• Existing Customers Updated: ${result.updatedCount}`;
-      if (result.errors.length > 0) {
-        msg += `\n\nNotes/Skipped Rows:\n` + result.errors.join('\n');
+      try {
+        localStorage.setItem('sle_customers', JSON.stringify(result.updatedCustomers));
+      } catch {
+        // Ignore storage quota errors
       }
-      alert(msg);
-    } catch (err: any) {
-      alert(`Import Error: ${err || 'Failed to process Excel file'}`);
+
+      const subParts: string[] = [];
+      if (result.updatedCount > 0) {
+        subParts.push(`${result.updatedCount} existing customer${result.updatedCount === 1 ? '' : 's'} updated`);
+      }
+      if (result.totalParsed > 0) {
+        subParts.push(`${result.totalParsed} row${result.totalParsed === 1 ? '' : 's'} parsed`);
+      }
+
+      setCustomerImportToast({
+        message: `✅ Bulk Import Complete: ${result.addedCount} customers added (${result.skippedCount} rows skipped).`,
+        subtext: subParts.length > 0 ? subParts.join(' • ') : undefined,
+        details: result.errors.length > 0 ? result.errors.slice(0, 5) : undefined,
+      });
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err || 'Failed to process Excel file');
+      setCustomerImportToast({
+        message: `Import Error: ${errorMessage}`,
+        isError: true,
+      });
     } finally {
       if (e.target) e.target.value = '';
     }
@@ -993,30 +1058,10 @@ export const DemoApp: React.FC<DemoAppProps> = ({
     );
   };
 
-  // New Customer Form Modal State
-  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
-  const [custName, setCustName] = useState('');
-  const [custPhone, setCustPhone] = useState('');
-  const [custAddress, setCustAddress] = useState('');
-  const [custState, setCustState] = useState('West Bengal');
-  const [custStateCode, setCustStateCode] = useState('19');
-  const [custPinCode, setCustPinCode] = useState('713101');
-  const [custCategory, setCustCategory] = useState<'Domestic' | 'Commercial'>('Domestic');
-  const [custGstin, setCustGstin] = useState('');
-  const [custStatus, setCustStatus] = useState<'active' | 'inactive'>('active');
-
-  // Customer KYC & Supporting Documents Upload State (Add Customer Modal)
-  const [custDocuments, setCustDocuments] = useState<ClientDocument[]>([]);
-  const [custDocCategory, setCustDocCategory] = useState<ClientDocumentCategory>(
-    'Electricity Bill (Discom Consumer Copy)'
-  );
-  const [custDocUploadError, setCustDocUploadError] = useState<string | null>(null);
-  const [isCustDocDragging, setIsCustDocDragging] = useState(false);
-  const [custDocValidationError, setCustDocValidationError] = useState<boolean>(false);
-  const [showCustDocWarningModal, setShowCustDocWarningModal] = useState<boolean>(false);
-  const [custShakeKey, setCustShakeKey] = useState<number>(0);
-  const custDocFileInputRef = React.useRef<HTMLInputElement>(null);
-  const custDocSectionRef = React.useRef<HTMLDivElement>(null);
+  // Customer Form Modal (Add / Edit) & History State
+  const [showCustomerFormModal, setShowCustomerFormModal] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [historyCustomer, setHistoryCustomer] = useState<Customer | null>(null);
 
   // Customer Details & KYC Document Vault Modal
   const [selectedCustomerForDetails, setSelectedCustomerForDetails] = useState<Customer | null>(null);
@@ -1024,49 +1069,78 @@ export const DemoApp: React.FC<DemoAppProps> = ({
   // Standalone Document Viewer Modal
   const [viewingClientDoc, setViewingClientDoc] = useState<ClientDocument | null>(null);
 
-  const handleCustFiles = (files: FileList | File[]) => {
-    setCustDocUploadError(null);
-    const maxSizeBytes = 10 * 1024 * 1024; // 10MB limit
+  const handleOpenAddCustomer = () => {
+    setEditingCustomer(null);
+    setShowCustomerFormModal(true);
+  };
 
-    Array.from(files).forEach((file) => {
-      if (file.size > maxSizeBytes) {
-        setCustDocUploadError(`File "${file.name}" exceeds the 10MB limit.`);
-        return;
-      }
+  const handleOpenEditCustomer = (customer: Customer) => {
+    setEditingCustomer(customer);
+    setShowCustomerFormModal(true);
+  };
 
-      const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
-      if (!validTypes.includes(file.type) && !file.name.match(/\.(pdf|jpe?g|png|webp)$/i)) {
-        setCustDocUploadError(`File "${file.name}" is not a supported format (PDF, JPG, PNG).`);
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        const doc: ClientDocument = {
-          id: `DOC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          category: custDocCategory,
-          name: file.name,
-          size: formatFileSize(file.size),
-          dataUrl: reader.result as string,
-          uploadedAt: new Date().toISOString().split('T')[0],
-          mimeType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
+  const handleSaveCustomerForm = (customerData: Customer, isEdit: boolean) => {
+    setCustomers((prev) => {
+      let next: Customer[];
+      if (isEdit) {
+        next = prev.map((c) => {
+          if (c.id === editingCustomer?.id || c.id === customerData.id) {
+            const oldRecord = editingCustomer || c;
+            const baseHistory = ensureInitialAuditHistory(oldRecord.auditHistory, DEFAULT_AUDIT_USER);
+            const changes = diffCustomerFields(oldRecord, customerData);
+            return {
+              ...customerData,
+              auditHistory:
+                changes.length > 0
+                  ? [...baseHistory, createAuditEntry('UPDATED', DEFAULT_AUDIT_USER, changes)]
+                  : baseHistory,
+            };
+          }
+          return c;
+        });
+      } else {
+        const createdCustomer: Customer = {
+          ...customerData,
+          auditHistory: [createAuditEntry('CREATED', DEFAULT_AUDIT_USER)],
         };
-
-        setCustDocuments((prev) => [...prev, doc]);
-        setCustDocValidationError(false);
-        setShowCustDocWarningModal(false);
-      };
-      reader.readAsDataURL(file);
+        next = [createdCustomer, ...prev];
+      }
+      try {
+        localStorage.setItem('sle_customers', JSON.stringify(next));
+      } catch {
+        // Ignore storage quota errors
+      }
+      return next;
+    });
+    setShowCustomerFormModal(false);
+    setEditingCustomer(null);
+    setCustomerImportToast({
+      message: isEdit
+        ? `Customer "${customerData.name}" (${customerData.id}) updated.`
+        : `Customer "${customerData.name}" (${customerData.id}) added to directory.`,
     });
   };
 
-  const handleRemoveCustDoc = (id: string) => {
-    setCustDocuments((prev) => prev.filter((d) => d.id !== id));
-  };
-
   const handleUpdateCustomerProfile = (updatedCust: Customer) => {
-    setCustomers((prev) => prev.map((c) => (c.id === updatedCust.id ? updatedCust : c)));
-    setSelectedCustomerForDetails(updatedCust);
+    let enrichedUpdated = updatedCust;
+    setCustomers((prev) =>
+      prev.map((c) => {
+        if (c.id === updatedCust.id) {
+          const baseHistory = ensureInitialAuditHistory(c.auditHistory, DEFAULT_AUDIT_USER);
+          const changes = diffCustomerFields(c, updatedCust);
+          enrichedUpdated = {
+            ...updatedCust,
+            auditHistory:
+              changes.length > 0
+                ? [...baseHistory, createAuditEntry('UPDATED', DEFAULT_AUDIT_USER, changes)]
+                : baseHistory,
+          };
+          return enrichedUpdated;
+        }
+        return c;
+      })
+    );
+    setSelectedCustomerForDetails(enrichedUpdated);
   };
 
   // Quotations & Invoices Live Search State
@@ -1105,9 +1179,23 @@ export const DemoApp: React.FC<DemoAppProps> = ({
 
   const toggleCustomerStatus = (id: string) => {
     setCustomers((prev) =>
-      prev.map((c) =>
-        c.id === id ? { ...c, status: c.status === 'inactive' ? 'active' : 'inactive' } : c
-      )
+      prev.map((c) => {
+        if (c.id !== id) return c;
+        const nextStatus: 'active' | 'inactive' = c.status === 'inactive' ? 'active' : 'inactive';
+        const baseHistory = ensureInitialAuditHistory(c.auditHistory, DEFAULT_AUDIT_USER);
+        const statusChange = [
+          {
+            field: 'Status',
+            oldValue: c.status === 'inactive' ? 'Inactive' : 'Active',
+            newValue: nextStatus === 'inactive' ? 'Inactive' : 'Active',
+          },
+        ];
+        return {
+          ...c,
+          status: nextStatus,
+          auditHistory: [...baseHistory, createAuditEntry('UPDATED', DEFAULT_AUDIT_USER, statusChange)],
+        };
+      })
     );
   };
 
@@ -1172,57 +1260,6 @@ export const DemoApp: React.FC<DemoAppProps> = ({
     setActiveTab(newDoc.type === 'Quotation' ? 'quotations' : 'invoices');
   };
 
-  const handleStateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const selected = INDIAN_STATES.find((s) => s.stateCode === e.target.value);
-    if (selected) {
-      setCustState(selected.state);
-      setCustStateCode(selected.stateCode);
-    }
-  };
-
-  const handleAddCustomerSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!custName || !custPhone || !custAddress || !custPinCode) return;
-
-    // Strictly mandatory supporting document validation
-    if (!custDocuments || custDocuments.length === 0) {
-      setCustDocValidationError(true);
-      setCustShakeKey((prev) => prev + 1);
-      setShowCustDocWarningModal(true);
-      custDocSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      return;
-    }
-
-    const newC: Customer = {
-      id: `CUST-${Math.floor(100 + Math.random() * 900)}`,
-      name: custName,
-      phone: custPhone,
-      address: custAddress,
-      state: custState,
-      stateCode: custStateCode,
-      pinCode: custPinCode,
-      pincode: custPinCode,
-      category: custCategory,
-      gstin: custGstin,
-      status: custStatus,
-      documents: custDocuments,
-    };
-
-    setCustomers((prev) => [newC, ...prev]);
-    setShowAddCustomerModal(false);
-    setCustName('');
-    setCustPhone('');
-    setCustAddress('');
-    setCustState('West Bengal');
-    setCustStateCode('19');
-    setCustPinCode('713101');
-    setCustGstin('');
-    setCustStatus('active');
-    setCustDocuments([]);
-    setCustDocUploadError(null);
-    setCustDocValidationError(false);
-    setShowCustDocWarningModal(false);
-  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -1232,7 +1269,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
         <div className="flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-4 sm:gap-5">
           <div className="flex items-center justify-center shrink-0">
             <CompanyLogo 
-              className="h-14 sm:h-20 w-auto rounded-xl shadow-xs shrink-0 object-contain mx-auto sm:mx-0" 
+              className="h-14 sm:h-20 w-auto max-w-[160px] sm:max-w-[200px] rounded-xl shadow-xs shrink-0 object-contain mx-auto sm:mx-0" 
               allowUpload={false} 
               showUploadTrigger={false} 
             />
@@ -2058,7 +2095,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             }}
             onOpenAddCustomerModal={() => {
               setActiveTab('customers');
-              setShowAddCustomerModal(true);
+              handleOpenAddCustomer();
             }}
             onRecordPaymentForInvoice={(inv) => setRecordingPaymentDoc(inv)}
             stockLogs={stockLogs}
@@ -2691,6 +2728,17 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                 className="hidden"
               />
 
+              {/* Download Excel Template Button */}
+              <button
+                type="button"
+                onClick={handleDownloadCustomerTemplate}
+                className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm active:scale-95 cursor-pointer"
+                title="Download standardized Excel template with sample rows and instructions"
+              >
+                <Download className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                <span>Excel Template</span>
+              </button>
+
               {/* Bulk Upload Button */}
               <button
                 type="button"
@@ -2716,7 +2764,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
               {/* Existing Add Customer Button */}
               <button
                 type="button"
-                onClick={() => setShowAddCustomerModal(true)}
+                onClick={handleOpenAddCustomer}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-amber-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-md active:scale-95 transition-all cursor-pointer shrink-0"
               >
                 <Plus className="w-4 h-4 text-amber-950 stroke-[3]"/>
@@ -2734,7 +2782,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                 type="text"
                 value={customerSearchQuery}
                 onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                placeholder="Search customer by name, phone number, GSTIN, or city..."
+                placeholder="Search by ID, customer name, code, contact person, phone, email, GSTIN, or city..."
                 className="w-full pl-10 pr-9 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all"
               />
               {customerSearchQuery && (
@@ -2799,17 +2847,25 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             </div>
           </div>
 
-          {/* Customers Grid or Empty State */}
+          {/* High-Density ERP Data Grid or Empty State */}
           {(() => {
             const query = customerSearchQuery.toLowerCase().trim();
             const filteredCustomers = customers.filter((client) => {
               // 1. Text Query Filter
               const matchesSearch =
                 !query ||
+                client.id.toLowerCase().includes(query) ||
                 client.name.toLowerCase().includes(query) ||
-                client.phone.includes(query) ||
+                (client.contactPerson && client.contactPerson.toLowerCase().includes(query)) ||
+                (client.code && client.code.toLowerCase().includes(query)) ||
+                client.phone.toLowerCase().includes(query) ||
+                (client.email && client.email.toLowerCase().includes(query)) ||
+                (client.spocEmail && client.spocEmail.toLowerCase().includes(query)) ||
+                (client.financeEmail && client.financeEmail.toLowerCase().includes(query)) ||
                 (client.gstin && client.gstin.toLowerCase().includes(query)) ||
                 client.address.toLowerCase().includes(query) ||
+                (client.city && client.city.toLowerCase().includes(query)) ||
+                (client.district && client.district.toLowerCase().includes(query)) ||
                 (client.state && client.state.toLowerCase().includes(query));
 
               // 2. Status Filter
@@ -2832,151 +2888,335 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   <Users className="w-8 h-8 text-slate-400 mx-auto" />
                   <h3 className="font-bold text-slate-800 dark:text-slate-200 text-sm">No customers found</h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                    No customer records match your current search query or filter criteria.
+                    {customers.length === 0
+                      ? 'No customer records added yet. Click "+ Add Customer" or download the "Excel Template" to bulk import clients.'
+                      : 'No customer records match your current search query or filter criteria.'}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCustomerSearchQuery('');
-                      setCustomerCategoryFilter('All');
-                      setCustomerStatusFilter('All');
-                    }}
-                    className="inline-flex items-center space-x-1.5 text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline pt-1"
-                  >
-                    <span>Clear all filters</span>
-                  </button>
+                  {(customerSearchQuery || customerCategoryFilter !== 'All' || customerStatusFilter !== 'All') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerSearchQuery('');
+                        setCustomerCategoryFilter('All');
+                        setCustomerStatusFilter('All');
+                      }}
+                      className="inline-flex items-center space-x-1.5 text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline pt-1 cursor-pointer"
+                    >
+                      <span>Clear all filters</span>
+                    </button>
+                  )}
                 </div>
               );
             }
 
+            // Build latest invoice date map per customer for Last Invoice Dt. fallback
+            const latestInvoiceByCustomer = new Map<string, string>();
+            documents.forEach((doc) => {
+              if (doc.type !== 'Invoice' || doc.status === 'Cancelled' || !doc.date) return;
+              const keys = [
+                doc.customerId ? `id:${doc.customerId}` : '',
+                doc.customerName ? `name:${doc.customerName.trim().toLowerCase()}` : '',
+              ].filter(Boolean);
+              keys.forEach((k) => {
+                const prev = latestInvoiceByCustomer.get(k);
+                if (!prev || doc.date > prev) {
+                  latestInvoiceByCustomer.set(k, doc.date);
+                }
+              });
+            });
+
             return (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {filteredCustomers.map((c) => {
-                  const isActive = c.status === 'active';
-                  return (
-                    <div
-                      key={c.id}
-                      className={`border rounded-2xl p-5 shadow-sm space-y-3 transition-all duration-200 ${
-                        isActive
-                          ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-amber-400 dark:hover:border-amber-500'
-                          : 'bg-slate-50/80 dark:bg-slate-900/40 border-slate-200/60 dark:border-slate-800/60 opacity-85'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">{c.name}</h3>
-                          </div>
-                          <span className="text-[10px] font-mono font-bold text-slate-400">{c.id}</span>
-                        </div>
-                        
-                        <div className="flex flex-col items-end gap-1">
-                          {/* Category Badge */}
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                              c.category === 'Commercial'
-                                ? 'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800'
-                                : 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800'
-                            }`}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm overflow-hidden">
+                {/* Compact ERP Meta Bar */}
+                <div className="px-4 py-2 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 dark:text-slate-400">
+                  <div>
+                    Showing <strong className="text-slate-900 dark:text-slate-100">{filteredCustomers.length}</strong> of{' '}
+                    <strong className="text-slate-900 dark:text-slate-100">{customers.length}</strong> Customer Records
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Click any <span className="text-[#1a6696] dark:text-sky-400 underline font-semibold">Customer Name</span> to view or edit full ERP details • Scroll horizontally for all 23 columns
+                  </div>
+                </div>
+
+                {/* Horizontally Scrollable High-Density ERP Table */}
+                <div className="overflow-x-auto max-h-[68vh] relative">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead className="sticky top-0 z-20">
+                      <tr className="bg-[#155370] text-white font-semibold text-xs whitespace-nowrap">
+                        <th className="sticky left-0 top-0 z-30 bg-[#155370] border border-[#1d6587] px-3 py-2.5 min-w-[68px] w-[68px]">
+                          ID
+                        </th>
+                        <th className="sticky left-[68px] top-0 z-30 bg-[#155370] border border-[#1d6587] px-3 py-2.5 min-w-[215px] shadow-[3px_0_6px_-2px_rgba(0,0,0,0.28)]">
+                          Customer Name
+                        </th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Last Invoice Dt.</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Code</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Site Survey / Inspection</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 min-w-[200px]">Address</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Location</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Currency</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Email</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">SPOC Email ID</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Finance Email ID</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Phone / Mobile</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Type</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Credit Period</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Terms of Payment</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Dispatch Through</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Terms of Delivery</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">TDS</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">GST No Reqd</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">GSTIN</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">State Code</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap">Status</th>
+                        <th className="border border-[#1d6587] px-3 py-2.5 whitespace-nowrap text-center">Actions</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {filteredCustomers.map((c, idx) => {
+                        const isEven = idx % 2 === 0;
+                        const rowBgClass = isEven
+                          ? 'bg-white dark:bg-slate-900'
+                          : 'bg-[#f0f7fa] dark:bg-slate-800/70';
+                        const stickyBgClass = isEven
+                          ? 'bg-white dark:bg-slate-900 group-hover:bg-[#e1eff6] dark:group-hover:bg-slate-800'
+                          : 'bg-[#f0f7fa] dark:bg-slate-800 group-hover:bg-[#e1eff6] dark:group-hover:bg-slate-800';
+                        const isActive = c.status === 'active';
+                        const rawLastInvDate =
+                          c.lastInvoiceDate ||
+                          latestInvoiceByCustomer.get(`id:${c.id}`) ||
+                          latestInvoiceByCustomer.get(`name:${c.name.trim().toLowerCase()}`);
+                        const lastInvFormatted = formatErpDate(rawLastInvDate);
+                        const clientCode = c.code || deriveClientCode(c.name);
+                        const surveyStatus = c.siteSurveyRequired || 'Required';
+                        const locationLabel = c.locationType || deriveLocationType(c.state, c.stateCode);
+                        const gstReq = c.gstNoRequired || (c.gstin ? 'Yes' : 'No');
+                        const creditDays = c.creditPeriodDays ?? '0';
+                        const fullAddr = formatFullAddress(c);
+
+                        return (
+                          <tr
+                            key={c.id}
+                            className={`group ${rowBgClass} hover:bg-[#e1eff6] dark:hover:bg-slate-800 transition-colors text-slate-700 dark:text-slate-200`}
                           >
-                            {c.category}
-                          </span>
+                            {/* 1. ID (Sticky) */}
+                            <td
+                              className={`sticky left-0 z-10 ${stickyBgClass} border border-slate-200 dark:border-slate-700 px-3 py-2 font-mono font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap align-top`}
+                            >
+                              {c.id}
+                            </td>
 
-                          {/* Status Badge */}
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
-                              isActive
-                                ? 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
-                                : 'bg-slate-200 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
-                            }`}
-                          >
-                            <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
-                            {isActive ? 'Active' : 'Inactive'}
-                          </span>
-                        </div>
-                      </div>
+                            {/* 2. Customer Name + Contact Person (Sticky) */}
+                            <td
+                              className={`sticky left-[68px] z-10 ${stickyBgClass} border border-slate-200 dark:border-slate-700 px-3 py-2 min-w-[215px] max-w-[250px] shadow-[3px_0_6px_-2px_rgba(15,23,42,0.12)] align-top`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditCustomer(c)}
+                                className="text-[#1a6696] dark:text-sky-400 underline hover:text-blue-800 dark:hover:text-sky-300 font-semibold cursor-pointer text-left leading-snug break-words"
+                                title="Click to Edit / View Customer Profile"
+                              >
+                                {c.name}
+                              </button>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight">
+                                {c.contactPerson ? c.contactPerson : '—'}
+                              </div>
+                            </td>
 
-                      <div className="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
-                        <div className="flex items-center space-x-2">
-                          <PhoneCall className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>{c.phone}</span>
-                        </div>
-                        <div className="flex items-start space-x-2">
-                          <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-                          <div>
-                            <div className="text-slate-800 dark:text-slate-200 font-medium">{c.address}</div>
-                            <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                              {c.state} ({c.stateCode || '19'}) - {c.pinCode || c.pincode}
-                            </div>
-                          </div>
-                        </div>
-                        {c.gstin && (
-                          <div className="flex items-center space-x-2">
-                            <Tag className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span className="font-mono text-[11px]">GSTIN: {c.gstin}</span>
-                          </div>
-                        )}
-                      </div>
+                            {/* 3. Last Invoice Dt. */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-mono align-top">
+                              {lastInvFormatted}
+                            </td>
 
-                      {/* Direct One-Click Communication Action Buttons (Call & WhatsApp) */}
-                      <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleDirectCall(c.phone)}
-                          className="flex items-center justify-center gap-1.5 bg-gradient-to-b from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 text-white font-extrabold text-xs py-2 px-3 rounded-xl transition-all duration-200 shadow-[0_3px_0_#0369a1,0_6px_10px_rgba(14,165,233,0.3)] hover:-translate-y-0.5 active:translate-y-0.5 active:shadow-none border border-sky-400/80 cursor-pointer"
-                          title={`Direct phone call to ${c.name} (${c.phone})`}
-                        >
-                          <Phone className="w-3.5 h-3.5 text-sky-100" />
-                          <span>Call</span>
-                        </button>
+                            {/* 4. Code */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-mono font-bold text-slate-800 dark:text-slate-100 align-top">
+                              {clientCode}
+                            </td>
 
-                        <button
-                          type="button"
-                          onClick={() => handleDirectWhatsApp(c.phone, c.name)}
-                          className="flex items-center justify-center gap-1.5 bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-extrabold text-xs py-2 px-3 rounded-xl transition-all duration-200 shadow-[0_3px_0_#047857,0_6px_10px_rgba(16,185,129,0.3)] hover:-translate-y-0.5 active:translate-y-0.5 active:shadow-none border border-emerald-400/80 cursor-pointer"
-                          title={`Chat on WhatsApp with ${c.name}`}
-                        >
-                          <MessageCircle className="w-3.5 h-3.5 text-emerald-100" />
-                          <span>WhatsApp</span>
-                        </button>
-                      </div>
+                            {/* 5. Site Survey / Inspection */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                  surveyStatus === 'Required'
+                                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                                }`}
+                              >
+                                {surveyStatus}
+                              </span>
+                            </td>
 
-                      {/* Attached KYC & Site Documents Vault Button */}
-                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedCustomerForDetails(c)}
-                          className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 dark:text-amber-200 border border-amber-400/40 font-bold text-xs transition-all cursor-pointer hover:shadow-xs"
-                          title="View client profile and KYC supporting documents"
-                        >
-                          <div className="flex items-center gap-2">
-                            <FileText className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                            <span className="font-extrabold text-[11px]">KYC &amp; Site Documents</span>
-                          </div>
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black">
-                            {(c.documents || []).length} Attached
-                          </span>
-                        </button>
-                      </div>
+                            {/* 6. Address (Multi-line wrapped) */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 min-w-[180px] max-w-[260px] whitespace-normal break-words leading-snug align-top">
+                              {fullAddr}
+                            </td>
 
-                      {/* Active / Inactive Status Toggle Action */}
-                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                        <span className="text-[11px] text-slate-400 dark:text-slate-500 font-medium">Account Status</span>
-                        <button
-                          type="button"
-                          onClick={() => toggleCustomerStatus(c.id)}
-                          className={`text-[11px] font-bold px-3 py-1 rounded-xl transition-all duration-200 ease-out border ${
-                            isActive
-                              ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-300 dark:border-rose-800/80'
-                              : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 dark:text-emerald-300 dark:border-emerald-800/80'
-                          }`}
-                        >
-                          {isActive ? 'Mark Inactive' : 'Set Active'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                            {/* 7. Location */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                  locationLabel === 'Within State'
+                                    ? 'bg-teal-50 text-teal-800 dark:bg-teal-950/50 dark:text-teal-300'
+                                    : 'bg-indigo-50 text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300'
+                                }`}
+                              >
+                                {locationLabel}
+                              </span>
+                            </td>
+
+                            {/* 8. Currency */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-mono align-top">
+                              {c.currency || 'Rs.'}
+                            </td>
+
+                            {/* 9. Email */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              {c.email || '—'}
+                            </td>
+
+                            {/* 10. SPOC Email ID */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              {c.spocEmail || '—'}
+                            </td>
+
+                            {/* 11. Finance Email ID */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              {c.financeEmail || '—'}
+                            </td>
+
+                            {/* 12. Phone / Mobile */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-mono align-top">
+                              <div className="flex items-center gap-1.5">
+                                <span>{c.phone}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDirectWhatsApp(c.phone, c.name)}
+                                  className="p-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 cursor-pointer"
+                                  title={`WhatsApp ${c.name}`}
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* 13. Type */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              <span
+                                className={`inline-block text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                                  c.category === 'Commercial'
+                                    ? 'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800'
+                                    : 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800'
+                                }`}
+                              >
+                                {c.category}
+                              </span>
+                            </td>
+
+                            {/* 14. Credit Period */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-mono text-center align-top">
+                              {creditDays} {Number(creditDays) === 1 ? 'Day' : 'Days'}
+                            </td>
+
+                            {/* 15. Terms of Payment */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              {c.termsOfPayment || 'Advance'}
+                            </td>
+
+                            {/* 16. Dispatch Through */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              {c.dispatchThrough || 'Company Vehicle'}
+                            </td>
+
+                            {/* 17. Terms of Delivery */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              {c.termsOfDelivery || 'Site Delivery'}
+                            </td>
+
+                            {/* 18. TDS */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap text-center align-top">
+                              {c.tds || 'No'}
+                            </td>
+
+                            {/* 19. GST No Reqd */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap text-center align-top">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                  gstReq === 'Yes'
+                                    ? 'bg-sky-50 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300'
+                                    : 'text-slate-500 dark:text-slate-400'
+                                }`}
+                              >
+                                {gstReq}
+                              </span>
+                            </td>
+
+                            {/* 20. GSTIN */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-mono align-top">
+                              {c.gstin || '—'}
+                            </td>
+
+                            {/* 21. State Code */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-mono text-center align-top">
+                              {c.stateCode || '19'}
+                            </td>
+
+                            {/* 22. Status */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              <button
+                                type="button"
+                                onClick={() => toggleCustomerStatus(c.id)}
+                                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border cursor-pointer transition-colors ${
+                                  isActive
+                                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
+                                    : 'bg-slate-200 text-slate-700 border-slate-300 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+                                }`}
+                                title="Click to toggle Active / Inactive"
+                              >
+                                {isActive ? 'Active' : 'Inactive'}
+                              </button>
+                            </td>
+
+                            {/* 23. Actions */}
+                            <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditCustomer(c)}
+                                  className="min-w-[32px] min-h-[32px] flex items-center justify-center p-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-[#155370] dark:bg-sky-950/50 dark:hover:bg-sky-900/60 dark:text-sky-300 border border-sky-200 dark:border-sky-800 transition-colors cursor-pointer"
+                                  title={`Edit ${c.name}`}
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedCustomerForDetails(c)}
+                                  className="relative min-w-[32px] min-h-[32px] flex items-center justify-center p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800 transition-colors cursor-pointer"
+                                  title={`KYC & Site Documents (${(c.documents || []).length})`}
+                                >
+                                  <FileText className="w-3.5 h-3.5" />
+                                  {(c.documents || []).length > 0 && (
+                                    <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-amber-500 text-slate-950 text-[9px] font-black flex items-center justify-center">
+                                      {(c.documents || []).length}
+                                    </span>
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setHistoryCustomer(c)}
+                                  className="min-w-[32px] min-h-[32px] flex items-center justify-center p-1.5 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 transition-colors cursor-pointer"
+                                  title="View Audit History"
+                                >
+                                  <History className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             );
           })()}
@@ -3135,418 +3375,21 @@ export const DemoApp: React.FC<DemoAppProps> = ({
         </Suspense>
       )}
 
-      {/* Add Customer Modal with Supporting Documents & KYC */}
-      {showAddCustomerModal && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 z-50 animate-in fade-in duration-150">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
-            {/* Modal Header */}
-            <div className="bg-slate-900 text-white px-5 py-4 flex items-center justify-between border-b border-slate-800 shrink-0">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                  <Users className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-amber-400">Add New Solar Client</h3>
-                  <p className="text-[11px] text-slate-400">Master details &amp; KYC onboarding</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAddCustomerModal(false);
-                  setCustDocuments([]);
-                  setCustDocUploadError(null);
-                  setCustDocValidationError(false);
-                  setShowCustDocWarningModal(false);
-                }}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Modal Scrollable Form Body */}
-            <form onSubmit={handleAddCustomerSubmit} className="p-5 overflow-y-auto space-y-4 text-xs">
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Full Name / Company Name <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Sukanta Nandi / Mondal Enterprises"
-                  value={custName}
-                  onChange={(e) => setCustName(e.target.value)}
-                  required
-                  className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  WhatsApp Phone Number <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="+91 98765 43210"
-                  value={custPhone}
-                  onChange={(e) => setCustPhone(e.target.value)}
-                  required
-                  className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Category</label>
-                  <select
-                    value={custCategory}
-                    onChange={(e) => setCustCategory(e.target.value as any)}
-                    className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="Domestic">Domestic</option>
-                    <option value="Commercial">Commercial</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">GSTIN (Optional)</label>
-                  <input
-                    type="text"
-                    placeholder="19ABCDE1234F1Z5"
-                    value={custGstin}
-                    onChange={(e) => setCustGstin(e.target.value)}
-                    className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono"
-                  />
-                </div>
-              </div>
-
-              {/* Status Selector Field */}
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Client Status</label>
-                <select
-                  value={custStatus}
-                  onChange={(e) => setCustStatus(e.target.value as 'active' | 'inactive')}
-                  className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-medium"
-                >
-                  <option value="active">Active Client</option>
-                  <option value="inactive">Inactive Client</option>
-                </select>
-              </div>
-
-              {/* Address Field */}
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Address / Street Details <span className="text-rose-500">*</span>
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g. Holdings No. 45, College Road, Burdwan"
-                  value={custAddress}
-                  onChange={(e) => setCustAddress(e.target.value)}
-                  required
-                  className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
-
-              {/* State and Pin Code Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">State</label>
-                  <select
-                    value={custStateCode}
-                    onChange={handleStateChange}
-                    className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-medium focus:ring-2 focus:ring-amber-500"
-                  >
-                    {INDIAN_STATES.map((s) => (
-                      <option key={s.stateCode} value={s.stateCode}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Pin Code <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 713101"
-                    maxLength={6}
-                    pattern="[0-9]{6}"
-                    value={custPinCode}
-                    onChange={(e) => setCustPinCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    required
-                    className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-              </div>
-
-              {/* 1. Supporting Documents & KYC Section */}
-              <div
-                ref={custDocSectionRef}
-                key={`cust-doc-section-${custShakeKey}`}
-                className={`p-4 rounded-2xl space-y-3 transition-all duration-200 ${
-                  custDocValidationError
-                    ? 'border-2 border-rose-500 bg-rose-50/50 dark:bg-rose-950/25 ring-4 ring-rose-500/20 animate-shake'
-                    : 'border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40'
-                }`}
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pb-2 border-b border-slate-200/80 dark:border-slate-800">
-                  <div>
-                    <label className="font-extrabold text-xs text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                      <FileText className={`w-4 h-4 ${custDocValidationError ? 'text-rose-500' : 'text-amber-500'}`} />
-                      <span>Supporting Documents &amp; KYC</span>
-                      <span className="text-rose-500 font-black text-sm leading-none">*</span>
-                    </label>
-                    <p className="text-[10px] text-slate-400">
-                      Discom electricity bills, KYC identity proof, land deed, or site photos
-                    </p>
-                  </div>
-
-                  <div className="flex items-center space-x-2 shrink-0">
-                    {custDocValidationError ? (
-                      <span className="text-[10px] uppercase font-black px-2.5 py-1 rounded-full bg-rose-600 text-white animate-pulse flex items-center gap-1 shadow-xs">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        Mandatory Document Required *
-                      </span>
-                    ) : (
-                      <span
-                        className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full font-mono ${
-                          custDocuments.length > 0
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-                        }`}
-                      >
-                        {custDocuments.length} {custDocuments.length === 1 ? 'Doc Attached' : 'Docs Attached'}
-                      </span>
-                    )}
-
-                    {/* Document Category Selector Dropdown */}
-                    <div className="flex items-center space-x-1 shrink-0">
-                      <span className="text-[10px] text-slate-500 font-semibold">Type:</span>
-                      <select
-                        value={custDocCategory}
-                        onChange={(e) => setCustDocCategory(e.target.value as ClientDocumentCategory)}
-                        className="text-xs p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-medium"
-                      >
-                        {KYC_DOCUMENT_CATEGORIES.map((cat) => (
-                          <option key={cat} value={cat}>
-                            {cat}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Error Banner when zero documents attached on submit */}
-                {custDocValidationError && (
-                  <div className="p-3.5 rounded-2xl bg-rose-100/90 dark:bg-rose-950/70 border-2 border-rose-500 text-rose-900 dark:text-rose-100 shadow-sm flex items-start gap-3">
-                    <div className="p-1 rounded-lg bg-rose-500 text-white shrink-0 mt-0.5">
-                      <AlertCircle className="w-4 h-4" />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="font-black text-xs uppercase tracking-wide flex items-center gap-2 text-rose-800 dark:text-rose-200">
-                        <span>Mandatory Document Required</span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-500 text-white rounded-full">
-                          Blocking Error
-                        </span>
-                      </div>
-                      <p className="text-xs leading-relaxed font-semibold text-rose-900 dark:text-rose-100">
-                        Cannot register customer without supporting records! Please attach at least one site KYC document (e.g., Electricity Bill, Aadhaar, PAN, or Roof/Site Photo).
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Drag and Drop Zone */}
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setIsCustDocDragging(true);
-                  }}
-                  onDragLeave={() => setIsCustDocDragging(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setIsCustDocDragging(false);
-                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                      handleCustFiles(e.dataTransfer.files);
-                    }
-                  }}
-                  onClick={() => custDocFileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all duration-200 ${
-                    custDocValidationError
-                      ? 'border-rose-400 bg-rose-50/40 dark:bg-rose-950/30'
-                      : isCustDocDragging
-                      ? 'border-amber-500 bg-amber-100/50 dark:bg-amber-900/40'
-                      : 'border-slate-300 dark:border-slate-700 hover:border-amber-400 bg-white/70 dark:bg-slate-800/40'
-                  }`}
-                >
-                  <input
-                    type="file"
-                    ref={custDocFileInputRef}
-                    onChange={(e) => e.target.files && handleCustFiles(e.target.files)}
-                    multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.webp"
-                    className="hidden"
-                  />
-                  <div
-                    className={`w-9 h-9 mx-auto rounded-full flex items-center justify-center mb-1.5 ${
-                      custDocValidationError
-                        ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 animate-bounce'
-                        : 'bg-amber-500/15 text-amber-500'
-                    }`}
-                  >
-                    <UploadCloud className="w-5 h-5" />
-                  </div>
-                  <p className="font-bold text-xs text-slate-800 dark:text-slate-200">
-                    Click to browse or drag &amp; drop KYC files
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">
-                    Attach <span className="font-semibold text-amber-600 dark:text-amber-400">{custDocCategory}</span> (PDF, JPG, PNG up to 10MB)
-                  </p>
-                </div>
-
-                {custDocUploadError && (
-                  <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-center space-x-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{custDocUploadError}</span>
-                  </div>
-                )}
-
-                {/* Itemized Uploaded Documents Cards */}
-                {custDocuments.length > 0 && (
-                  <div className="space-y-2 mt-2">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-                      <span>Attached Files ({custDocuments.length})</span>
-                      <span className="text-emerald-500 font-bold">Saved with Client Record</span>
-                    </div>
-                    {custDocuments.map((doc) => (
-                      <div
-                        key={doc.id}
-                        className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 shadow-xs"
-                      >
-                        <div className="flex items-center space-x-2.5 min-w-0">
-                          <div className="p-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 shrink-0">
-                            {doc.name.toLowerCase().endsWith('.pdf') ? (
-                              <FileText className="w-4 h-4 text-rose-500" />
-                            ) : (
-                              <ImageIcon className="w-4 h-4 text-sky-500" />
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-600">
-                                {doc.category}
-                              </span>
-                              <span className="text-[9px] font-mono font-bold text-slate-400">
-                                {typeof doc.size === 'number'
-                                  ? `${(doc.size / (1024 * 1024)).toFixed(2)} MB`
-                                  : doc.size}
-                              </span>
-                            </div>
-                            <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate mt-0.5">
-                              {doc.name}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center space-x-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setViewingClientDoc(doc)}
-                            className="p-1.5 rounded-lg bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 text-sky-600 dark:text-sky-300 border border-sky-200 dark:border-sky-800 transition-colors cursor-pointer"
-                            title="View / Download Preview"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveCustDoc(doc.id)}
-                            className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 transition-colors cursor-pointer"
-                            title="Delete file"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-end space-x-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAddCustomerModal(false);
-                    setCustDocuments([]);
-                    setCustDocUploadError(null);
-                    setCustDocValidationError(false);
-                    setShowCustDocWarningModal(false);
-                  }}
-                  className="px-4 py-2 border border-slate-300 dark:border-slate-700 rounded-xl font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 font-extrabold text-slate-950 rounded-xl shadow-md transition-colors cursor-pointer"
-                >
-                  Save Client
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Customer Mandatory Document Required Warning Modal Popup */}
-      {showCustDocWarningModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 z-[70] animate-in fade-in duration-150">
-          <div className="bg-white dark:bg-slate-900 border-2 border-rose-500 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-shake">
-            <div className="p-6 text-center space-y-4">
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-100 dark:bg-rose-950/60 border-2 border-rose-300 dark:border-rose-800 flex items-center justify-center text-rose-600 dark:text-rose-400 shadow-inner">
-                <AlertTriangle className="w-9 h-9 stroke-[2.5]" />
-              </div>
-
-              <div className="space-y-2">
-                <span className="text-[10px] font-extrabold uppercase tracking-widest text-rose-700 dark:text-rose-300 bg-rose-100 dark:bg-rose-950/60 px-3 py-1 rounded-full border border-rose-300 dark:border-rose-800 font-mono">
-                  Site KYC Compliance
-                </span>
-                <h3 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">
-                  Mandatory Document Required
-                </h3>
-                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-semibold">
-                  Cannot register customer without supporting records! Please attach at least one site KYC document (e.g., Electricity Bill, Aadhaar, PAN, or Roof/Site Photo).
-                </p>
-              </div>
-
-              <div className="pt-2 flex flex-col sm:flex-row items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCustDocWarningModal(false);
-                    custDocSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    custDocFileInputRef.current?.click();
-                  }}
-                  className="w-full py-2.5 px-4 bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center space-x-2"
-                >
-                  <UploadCloud className="w-4 h-4" />
-                  <span>Attach KYC Document Now</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCustDocWarningModal(false)}
-                  className="w-full sm:w-auto py-2.5 px-4 border border-slate-300 dark:border-slate-700 rounded-xl font-bold text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Add / Edit Customer Modal (4-Section ERP Master Form) */}
+      {showCustomerFormModal && (
+        <Suspense fallback={<div className="fixed inset-0 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 text-xs text-sky-300 font-bold">Loading Customer Form...</div>}>
+          <CustomerFormModal
+            isOpen={showCustomerFormModal}
+            initialCustomer={editingCustomer}
+            existingCustomers={customers}
+            onClose={() => {
+              setShowCustomerFormModal(false);
+              setEditingCustomer(null);
+            }}
+            onSave={handleSaveCustomerForm}
+            onPreviewDoc={(doc) => setViewingClientDoc(doc)}
+          />
+        </Suspense>
       )}
 
       {/* Record Payment Modal */}
@@ -3749,6 +3592,62 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             onClose={() => setViewingClientDoc(null)}
           />
         </Suspense>
+      )}
+
+      {/* Customer Audit & Revision History Modal (Conditionally Mounted) */}
+      {historyCustomer && (
+        <Suspense fallback={<div className="fixed inset-0 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 text-xs text-indigo-300 font-bold">Loading Audit History...</div>}>
+          <AuditHistoryModal
+            entityType="Customer"
+            entityId={historyCustomer.id}
+            entityName={historyCustomer.name}
+            auditHistory={historyCustomer.auditHistory}
+            onClose={() => setHistoryCustomer(null)}
+          />
+        </Suspense>
+      )}
+
+      {/* Customer Bulk Excel Import / Template Toast */}
+      {customerImportToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`fixed bottom-5 right-5 z-[100] max-w-md rounded-2xl border px-4 py-3 shadow-2xl backdrop-blur-md transition-all ${
+            customerImportToast.isError
+              ? 'bg-rose-950/95 border-rose-500/60 text-rose-100'
+              : 'bg-slate-900/95 border-emerald-500/50 text-white'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs sm:text-sm font-semibold leading-snug">
+                {customerImportToast.message}
+              </p>
+              {customerImportToast.subtext && (
+                <p className="mt-1 text-[11px] text-slate-300">
+                  {customerImportToast.subtext}
+                </p>
+              )}
+              {customerImportToast.details && customerImportToast.details.length > 0 && (
+                <ul className="mt-2 space-y-0.5 text-[11px] text-amber-300 list-disc list-inside">
+                  {customerImportToast.details.map((detail, idx) => (
+                    <li key={idx} className="truncate">
+                      {detail}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setCustomerImportToast(null)}
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+              aria-label="Close notification"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       )}
 
     </div>

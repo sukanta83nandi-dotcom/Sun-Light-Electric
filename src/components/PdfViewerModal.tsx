@@ -204,7 +204,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({ doc, onClose, la
               {/* Header Row with Bold Top-Left Header Logo */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5 border-b-2 border-slate-800 pb-4 relative z-10">
                 <div className="flex items-center gap-5">
-                  <CompanyLogo className="h-14 sm:h-16 w-auto shadow-xs rounded-xl shrink-0" />
+                  <CompanyLogo className="h-14 sm:h-16 w-auto max-w-[140px] object-contain shadow-xs rounded-xl shrink-0" />
                   <div>
                     <h1 className="text-2xl font-black tracking-tight text-amber-600">{COMPANY_CREDENTIALS.companyName}</h1>
                     <p className="text-xs font-semibold text-slate-700">{COMPANY_CREDENTIALS.tagline}</p>
@@ -236,8 +236,8 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({ doc, onClose, la
                 
                 {/* Centered Watermark Emblem */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 select-none overflow-hidden">
-                  <div className="relative w-80 h-80 opacity-10 overflow-hidden flex items-center justify-center">
-                    <CompanyLogo iconOnly variant="watermark" className="w-72 h-72 object-contain" />
+                  <div className="relative w-80 h-80 overflow-hidden flex items-center justify-center">
+                    <CompanyLogo variant="watermark" className="w-72 h-72 object-contain" />
                   </div>
                 </div>
 

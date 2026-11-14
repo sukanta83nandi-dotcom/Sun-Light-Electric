@@ -83,8 +83,8 @@ export const DeliveryChallanModal: React.FC<DeliveryChallanModalProps> = ({ invo
       >
         {/* Subtle Watermark Emblem behind content */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 select-none overflow-hidden">
-          <div className="relative w-80 h-80 opacity-10 overflow-hidden flex items-center justify-center">
-            <CompanyLogo iconOnly variant="watermark" className="w-72 h-72 object-contain" />
+          <div className="relative w-80 h-80 overflow-hidden flex items-center justify-center">
+            <CompanyLogo variant="watermark" className="w-72 h-72 object-contain" />
           </div>
         </div>
 
@@ -93,7 +93,7 @@ export const DeliveryChallanModal: React.FC<DeliveryChallanModalProps> = ({ invo
           {/* Top Header & Branding Row */}
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b-2 border-slate-900 pb-4">
             <div className="flex items-start gap-4">
-              <CompanyLogo className="h-14 sm:h-16 w-auto shadow-xs rounded-xl shrink-0" />
+              <CompanyLogo className="h-14 sm:h-16 w-auto max-w-[140px] object-contain shadow-xs rounded-xl shrink-0" />
               <div>
                 <h1 className="text-2xl font-black tracking-tight text-amber-600">
                   {COMPANY_CREDENTIALS.companyName}

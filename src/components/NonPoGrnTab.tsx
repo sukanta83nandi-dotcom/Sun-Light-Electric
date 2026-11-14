@@ -964,11 +964,16 @@ export const NonPoGrnTab: React.FC<NonPoGrnTabProps> = ({
             </div>
 
             {/* Printable Voucher Body */}
-            <div className="p-6 sm:p-8 overflow-y-auto space-y-6 text-xs text-slate-800 dark:text-slate-200 print:text-black">
+            <div className="p-6 sm:p-8 overflow-y-auto space-y-6 text-xs text-slate-800 dark:text-slate-200 print:text-black relative">
+              {/* Centered Background Watermark */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 select-none overflow-hidden">
+                <CompanyLogo variant="watermark" className="w-72 h-72 object-contain" />
+              </div>
+
               {/* Sun Light Electric Brand Header */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b-2 border-[#0f4e56] gap-4">
+              <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b-2 border-[#0f4e56] gap-4">
                 <div className="flex items-center space-x-4">
-                  <CompanyLogo className="h-14 w-auto rounded-xl shadow-xs" />
+                  <CompanyLogo className="h-14 w-auto max-w-[140px] object-contain rounded-xl shadow-xs shrink-0" />
                   <div>
                     <h2 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">
                       SUN LIGHT ELECTRIC

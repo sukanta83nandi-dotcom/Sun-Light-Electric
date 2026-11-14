@@ -77,6 +77,7 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
   const [customCategoryText, setCustomCategoryText] = useState('');
   const [paymentTermsDays, setPaymentTermsDays] = useState<number>(30);
   const [balancePayable, setBalancePayable] = useState<number>(0);
+  const [status, setStatus] = useState<'active' | 'inactive'>('active');
 
   // Bank details
   const [bankName, setBankName] = useState('');
@@ -111,6 +112,7 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
       setCustomCategoryText(editingSupplier.categorySupplied);
       setPaymentTermsDays(editingSupplier.paymentTermsDays ?? 30);
       setBalancePayable(editingSupplier.balancePayable ?? 0);
+      setStatus(editingSupplier.status || 'active');
       setBankName(editingSupplier.bankDetails?.bankName || '');
       setAccountNo(editingSupplier.bankDetails?.accountNo || '');
       setIfscCode(editingSupplier.bankDetails?.ifscCode || '');
@@ -130,6 +132,7 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
       setCustomCategoryText('');
       setPaymentTermsDays(30);
       setBalancePayable(0);
+      setStatus('active');
       setBankName('HDFC Bank');
       setAccountNo('');
       setIfscCode('');
@@ -256,6 +259,7 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
         ifscCode: ifscCode.trim().toUpperCase(),
       },
       balancePayable: Number(balancePayable) || 0,
+      status,
       documents: uploadedDocs,
     };
 
@@ -473,21 +477,37 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
               </div>
             </div>
 
-            <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                State
-              </label>
-              <select
-                value={state}
-                onChange={(e) => setState(e.target.value)}
-                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl font-medium focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
-              >
-                {INDIAN_STATES.map((s) => (
-                  <option key={s.stateCode} value={s.state}>
-                    {s.state} ({s.stateCode})
-                  </option>
-                ))}
-              </select>
+            <div className="space-y-3">
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  State
+                </label>
+                <select
+                  value={state}
+                  onChange={(e) => setState(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl font-medium focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
+                >
+                  {INDIAN_STATES.map((s) => (
+                    <option key={s.stateCode} value={s.state}>
+                      {s.state} ({s.stateCode})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Supplier Status
+                </label>
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as 'active' | 'inactive')}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl font-semibold focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
             </div>
           </div>
 

@@ -248,12 +248,16 @@ export const EWayBillModal: React.FC<EWayBillModalProps> = ({ invoice, onClose }
 
         {/* Printable e-Way Bill Document Body */}
         <div className="p-4 sm:p-6 overflow-y-auto max-h-[82vh] bg-slate-800">
-          <div id="ewaybill-printable-container" ref={printableRef} style={{ backgroundColor: '#ffffff' }} className="ewaybill-printable bg-white text-slate-900 border-2 border-slate-900 rounded-xl p-6 sm:p-8 max-w-3xl mx-auto shadow-2xl relative font-sans text-xs">
-            
+          <div id="ewaybill-printable-container" ref={printableRef} style={{ backgroundColor: '#ffffff' }} className="ewaybill-printable bg-white text-slate-900 border-2 border-slate-900 rounded-xl p-6 sm:p-8 max-w-3xl mx-auto shadow-2xl relative overflow-hidden font-sans text-xs">
+            {/* Subtle Centered Watermark */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 select-none overflow-hidden">
+              <CompanyLogo variant="watermark" className="w-72 h-72 object-contain" />
+            </div>
+
             {/* Header Section: Title, Company Logo Branding, QR Code */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b-2 border-slate-900 pb-4 mb-4 gap-4">
+            <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between border-b-2 border-slate-900 pb-4 mb-4 gap-4">
               <div className="flex items-center gap-3">
-                <CompanyLogo className="h-14 sm:h-16 w-auto rounded-lg shrink-0" />
+                <CompanyLogo className="h-14 sm:h-16 w-auto max-w-[140px] object-contain rounded-lg shrink-0" />
                 <div className="border-l-2 border-slate-300 pl-3">
                   <div className="flex items-center space-x-2">
                     <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight uppercase">

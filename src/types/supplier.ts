@@ -1,3 +1,5 @@
+import { AuditLogEntry } from '../types';
+
 export interface SupplierDocument {
   id: string;
   name: string;
@@ -26,6 +28,8 @@ export interface Supplier {
     ifscCode: string;
   };
   balancePayable: number;        // ₹ Outstanding dues to supplier
+  status?: 'active' | 'inactive';
   documents?: SupplierDocument[];
+  auditHistory?: AuditLogEntry[];
 }
 

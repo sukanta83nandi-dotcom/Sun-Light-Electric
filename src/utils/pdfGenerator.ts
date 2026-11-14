@@ -4,6 +4,7 @@ import { QuotationInvoice, PaymentRecord } from '../types';
 import { COMPANY_CREDENTIALS } from '../data/mockData';
 import { numberToWordsINR } from './numberToWords';
 import { getUpiDetails, getQrDataUrlFromCache } from './upiHelper';
+import { getCustomLogo, DEFAULT_COMPANY_LOGO } from './logoStorage';
 
 export const EXACT_IMAGE_TERMS = `TERMS AND CONDITIONS
 1. Please Pay By A/C Payee Cheque Only
@@ -17,11 +18,31 @@ export const EXACT_IMAGE_TERMS = `TERMS AND CONDITIONS
 let cachedLogoDataUrl: string | null = null;
 let cachedEmblemDataUrl: string | null = null;
 
-// Preload logo image and generate isolated emblem
+// Preload default /assets/aistudio/logo.png into PNG Data URL, fallback to canvas brand mark
 if (typeof window !== 'undefined') {
   try {
     cachedLogoDataUrl = createBrandLogoPngFallback();
     cachedEmblemDataUrl = createBrandEmblemPngFallback();
+
+    const defaultImg = new Image();
+    defaultImg.crossOrigin = 'anonymous';
+    defaultImg.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = defaultImg.naturalWidth || 400;
+        c.height = defaultImg.naturalHeight || 200;
+        const ctx = c.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(defaultImg, 0, 0);
+          const png = c.toDataURL('image/png');
+          cachedLogoDataUrl = png;
+          cachedEmblemDataUrl = png;
+        }
+      } catch {
+        // Keep vector canvas fallback
+      }
+    };
+    defaultImg.src = DEFAULT_COMPANY_LOGO;
   } catch (e) {
     console.warn('Init logo canvas fallback failed:', e);
   }
@@ -179,14 +200,8 @@ function createBrandEmblemPngFallback(): string {
 }
 
 function getLogoDataUrlSync(): string | null {
-  if (typeof window !== 'undefined') {
-    try {
-      const custom = localStorage.getItem('sunlight_custom_brand_logo');
-      if (custom) return custom;
-    } catch (e) {
-      // ignore
-    }
-  }
+  const custom = getCustomLogo();
+  if (custom) return custom;
   if (cachedLogoDataUrl) return cachedLogoDataUrl;
   if (typeof document !== 'undefined') {
     cachedLogoDataUrl = createBrandLogoPngFallback();
@@ -196,20 +211,47 @@ function getLogoDataUrlSync(): string | null {
 }
 
 function getEmblemDataUrlSync(): string | null {
-  if (typeof window !== 'undefined') {
-    try {
-      const custom = localStorage.getItem('sunlight_custom_brand_logo');
-      if (custom) return custom;
-    } catch (e) {
-      // ignore
-    }
-  }
+  const custom = getCustomLogo();
+  if (custom) return custom;
   if (cachedEmblemDataUrl) return cachedEmblemDataUrl;
   if (typeof document !== 'undefined') {
     cachedEmblemDataUrl = createBrandEmblemPngFallback();
     return cachedEmblemDataUrl;
   }
   return null;
+}
+
+function addContainedImage(
+  pdf: jsPDF,
+  dataUrl: string,
+  boxX: number,
+  boxY: number,
+  maxW: number,
+  maxH: number,
+  centerInBox = false
+): void {
+  const format = dataUrl.startsWith('data:image/jpeg') || dataUrl.startsWith('data:image/jpg')
+    ? 'JPEG'
+    : dataUrl.startsWith('data:image/webp')
+    ? 'WEBP'
+    : 'PNG';
+
+  let drawW = maxW;
+  let drawH = maxH;
+  try {
+    const props = pdf.getImageProperties(dataUrl);
+    if (props && props.width > 0 && props.height > 0) {
+      const ratio = Math.min(maxW / props.width, maxH / props.height);
+      drawW = props.width * ratio;
+      drawH = props.height * ratio;
+    }
+  } catch {
+    // Fallback to bounding box
+  }
+
+  const drawX = centerInBox ? boxX + (maxW - drawW) / 2 : boxX;
+  const drawY = boxY + (maxH - drawH) / 2;
+  pdf.addImage(dataUrl, format as any, drawX, drawY, drawW, drawH);
 }
 
 /**
@@ -238,11 +280,10 @@ export function generateSunLightPdf(doc: QuotationInvoice): jsPDF {
   const logoData = getLogoDataUrlSync();
   const emblemData = getEmblemDataUrlSync() || logoData;
 
-  // 2. Render Header Logo (Top-Left - Bold & Well Spaced)
+  // 2. Render Header Logo (Top-Left - Aspect-Ratio Preserved)
   if (logoData) {
     try {
-      // Top left logo prominent alongside business credentials
-      pdf.addImage(logoData, 'PNG', 14, 8, 36, 28);
+      addContainedImage(pdf, logoData, 14, 8, 36, 28, false);
     } catch (e) {
       console.warn('Error adding header logo to PDF:', e);
     }
@@ -285,18 +326,18 @@ export function generateSunLightPdf(doc: QuotationInvoice): jsPDF {
   pdf.setLineWidth(0.5);
   pdf.line(14, 39, pageWidth - 14, 39);
 
-  // 3. Render Centered Background Watermark (Isolated Emblem Symbol Directly Behind Writing Area)
+  // 3. Render Centered Background Watermark (Aspect-Ratio Preserved Directly Behind Writing Area)
   if (emblemData) {
     try {
       // @ts-expect-error jsPDF GState typing
-      const gState = new pdf.GState({ opacity: 0.16 });
+      const gState = new pdf.GState({ opacity: 0.14 });
       pdf.setGState(gState);
 
-      const watermarkSize = 100; // 100mm x 100mm emblem
+      const watermarkSize = 100; // 100mm x 100mm bounding box
       const watermarkX = (pageWidth - watermarkSize) / 2;
       const watermarkY = 55; // Positioned directly behind writing, client details & table
 
-      pdf.addImage(emblemData, 'PNG', watermarkX, watermarkY, watermarkSize, watermarkSize);
+      addContainedImage(pdf, emblemData, watermarkX, watermarkY, watermarkSize, watermarkSize, true);
 
       // Restore 100% opacity for content
       // @ts-expect-error jsPDF GState typing
@@ -711,11 +752,11 @@ export function generateMoneyReceiptPdf(receipt: PaymentRecord, doc: QuotationIn
       const gState = new pdf.GState({ opacity: 0.12 });
       pdf.setGState(gState);
 
-      const watermarkSize = 100; // 100mm x 100mm emblem
+      const watermarkSize = 100; // 100mm x 100mm bounding box
       const watermarkX = (pageWidth - watermarkSize) / 2;
       const watermarkY = 85;
 
-      pdf.addImage(emblemData, 'PNG', watermarkX, watermarkY, watermarkSize, watermarkSize);
+      addContainedImage(pdf, emblemData, watermarkX, watermarkY, watermarkSize, watermarkSize, true);
 
       // Restore 100% opacity for content
       // @ts-expect-error jsPDF GState typing
@@ -726,10 +767,10 @@ export function generateMoneyReceiptPdf(receipt: PaymentRecord, doc: QuotationIn
     }
   }
 
-  // Header Logo
+  // Header Logo (Aspect-Ratio Preserved)
   if (logoData) {
     try {
-      pdf.addImage(logoData, 'PNG', 15, 16, 28, 22);
+      addContainedImage(pdf, logoData, 15, 16, 28, 22, false);
     } catch (e) {
       console.warn('Error adding logo to receipt PDF:', e);
     }

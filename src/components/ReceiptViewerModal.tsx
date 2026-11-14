@@ -89,8 +89,8 @@ export const ReceiptViewerModal: React.FC<ReceiptViewerModalProps> = ({
         <div className="p-4 sm:p-6 md:p-8 space-y-6 bg-white text-slate-900 border-t-4 border-emerald-500 overflow-y-auto flex-1 relative">
           
           {/* Centered Background Watermark Logo */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none opacity-[0.06] overflow-hidden z-0">
-            <CompanyLogo iconOnly className="w-72 h-72 object-contain" />
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden z-0">
+            <CompanyLogo variant="watermark" className="w-72 h-72 object-contain" />
           </div>
 
           <div className="relative z-10 space-y-6">
@@ -98,7 +98,7 @@ export const ReceiptViewerModal: React.FC<ReceiptViewerModalProps> = ({
             <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b border-slate-200 pb-4 gap-4">
               <div>
                 <div className="flex items-center space-x-3">
-                  <CompanyLogo className="h-12 w-auto object-contain shrink-0" />
+                  <CompanyLogo className="h-12 w-auto max-w-[130px] object-contain shrink-0" />
                   <div>
                     <h1 className="text-xl font-extrabold text-slate-900 uppercase tracking-tight">
                       {COMPANY_CREDENTIALS.companyName}

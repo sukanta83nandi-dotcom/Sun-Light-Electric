@@ -17,6 +17,7 @@ import {
   Layers,
   ArrowDownRight
 } from 'lucide-react';
+import { CompanyLogo } from './CompanyLogo';
 
 interface ChallanViewerModalProps {
   challan: SupplierChallan | null;
@@ -96,17 +97,25 @@ export const ChallanViewerModal: React.FC<ChallanViewerModalProps> = ({
         </div>
 
         {/* Printable & Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 text-xs text-slate-800 dark:text-slate-200">
-          
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 text-xs text-slate-800 dark:text-slate-200 relative">
+          {/* Subtle Centered Watermark */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 select-none overflow-hidden">
+            <CompanyLogo variant="watermark" className="w-72 h-72 object-contain" />
+          </div>
+
+          <div className="relative z-10 space-y-6">
           {/* Top Banner & Status */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-800">
-            <div>
-              <div className="text-[10px] uppercase font-bold text-slate-400">Goods Inward Certificate</div>
-              <div className="text-lg font-black text-slate-900 dark:text-white font-mono">
-                {challan.challanCode || challan.id}
-              </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Delivery Date: <strong className="text-slate-800 dark:text-slate-200">{challan.challanDate}</strong>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-50/90 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-3.5">
+              <CompanyLogo className="h-12 sm:h-14 w-auto max-w-[130px] object-contain rounded-xl shrink-0" />
+              <div>
+                <div className="text-[10px] uppercase font-bold text-slate-400">Goods Inward Certificate</div>
+                <div className="text-lg font-black text-slate-900 dark:text-white font-mono">
+                  {challan.challanCode || challan.id}
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Delivery Date: <strong className="text-slate-800 dark:text-slate-200">{challan.challanDate}</strong>
+                </div>
               </div>
             </div>
 
@@ -336,6 +345,7 @@ export const ChallanViewerModal: React.FC<ChallanViewerModalProps> = ({
                 </div>
               </div>
             </div>
+          </div>
           </div>
         </div>
 

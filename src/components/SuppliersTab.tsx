@@ -15,7 +15,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Edit3,
-  Trash2,
   Landmark,
   IndianRupee,
   Clock,
@@ -31,13 +30,21 @@ import {
   X,
   ShieldCheck,
   Truck,
+  History,
 } from 'lucide-react';
 import { AddSupplierModal } from './AddSupplierModal';
+import { AuditHistoryModal } from './AuditHistoryModal';
 import {
   exportSuppliersToExcel,
   importSuppliersFromExcel,
   downloadSupplierExcelTemplate,
 } from '../utils/excelSupplierHelper';
+import {
+  createAuditEntry,
+  diffSupplierFields,
+  ensureInitialAuditHistory,
+  DEFAULT_AUDIT_USER,
+} from '../utils/auditHelper';
 
 interface SuppliersTabProps {
   suppliers: Supplier[];
@@ -55,6 +62,7 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [payableFilter, setPayableFilter] = useState<'ALL' | 'WITH_DUES' | 'CLEARED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
@@ -66,6 +74,9 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
   // KYC Documents Viewing state
   const [selectedKycSupplier, setSelectedKycSupplier] = useState<Supplier | null>(null);
   const [previewKycDoc, setPreviewKycDoc] = useState<SupplierDocument | null>(null);
+
+  // Audit History Modal state
+  const [historySupplier, setHistorySupplier] = useState<Supplier | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -148,19 +159,51 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
 
   const handleSaveSupplier = (supplierData: Supplier) => {
     if (editingSupplier) {
+      const baseHistory = ensureInitialAuditHistory(editingSupplier.auditHistory, DEFAULT_AUDIT_USER);
+      const changes = diffSupplierFields(editingSupplier, supplierData);
+      const updatedWithAudit: Supplier = {
+        ...supplierData,
+        auditHistory:
+          changes.length > 0
+            ? [...baseHistory, createAuditEntry('UPDATED', DEFAULT_AUDIT_USER, changes)]
+            : baseHistory,
+      };
       setSuppliers((prev) =>
-        prev.map((s) => (s.id === editingSupplier.id ? supplierData : s))
+        prev.map((s) => (s.id === editingSupplier.id ? updatedWithAudit : s))
       );
     } else {
-      setSuppliers((prev) => [supplierData, ...prev]);
+      const createdWithAudit: Supplier = {
+        ...supplierData,
+        auditHistory: [createAuditEntry('CREATED', DEFAULT_AUDIT_USER)],
+      };
+      setSuppliers((prev) => [createdWithAudit, ...prev]);
     }
     setEditingSupplier(null);
   };
 
-  const handleDeleteSupplier = (id: string, name: string) => {
-    if (confirm(`Are you sure you want to delete supplier "${name}"? This action cannot be undone.`)) {
-      setSuppliers((prev) => prev.filter((s) => s.id !== id));
-    }
+  // Toggle Supplier Active / Inactive Status with Audit Logging
+  const handleToggleSupplierStatus = (supplierId: string) => {
+    setSuppliers((prev) =>
+      prev.map((s) => {
+        if (s.id !== supplierId) return s;
+        const currentStatus = s.status || 'active';
+        const nextStatus: 'active' | 'inactive' = currentStatus === 'active' ? 'inactive' : 'active';
+        const baseHistory = ensureInitialAuditHistory(s.auditHistory, DEFAULT_AUDIT_USER);
+        const statusChange = {
+          field: 'Status',
+          oldValue: currentStatus === 'active' ? 'Active' : 'Inactive',
+          newValue: nextStatus === 'active' ? 'Active' : 'Inactive',
+        };
+        return {
+          ...s,
+          status: nextStatus,
+          auditHistory: [
+            ...baseHistory,
+            createAuditEntry('UPDATED', DEFAULT_AUDIT_USER, [statusChange]),
+          ],
+        };
+      })
+    );
   };
 
   // Quick Settle Balance
@@ -171,10 +214,31 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
       alert('Please enter a valid payment amount.');
       return;
     }
-    const newBal = Math.max(0, settlingSupplier.balancePayable - paid);
+    const oldBal = Number(settlingSupplier.balancePayable) || 0;
+    const newBal = Math.max(0, oldBal - paid);
+    const baseHistory = ensureInitialAuditHistory(settlingSupplier.auditHistory, DEFAULT_AUDIT_USER);
+    const balChanges =
+      oldBal !== newBal
+        ? [
+            {
+              field: 'Balance Payable',
+              oldValue: `₹${oldBal.toLocaleString('en-IN')}`,
+              newValue: `₹${newBal.toLocaleString('en-IN')}`,
+            },
+          ]
+        : [];
     setSuppliers((prev) =>
       prev.map((s) =>
-        s.id === settlingSupplier.id ? { ...s, balancePayable: newBal } : s
+        s.id === settlingSupplier.id
+          ? {
+              ...s,
+              balancePayable: newBal,
+              auditHistory:
+                balChanges.length > 0
+                  ? [...baseHistory, createAuditEntry('UPDATED', DEFAULT_AUDIT_USER, balChanges)]
+                  : baseHistory,
+            }
+          : s
       )
     );
     alert(`Payment of ₹${paid.toLocaleString('en-IN')} recorded for ${settlingSupplier.companyName}. Remaining balance: ₹${newBal.toLocaleString('en-IN')}`);
@@ -210,12 +274,22 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
       matchesPayable = (s.balancePayable || 0) === 0;
     }
 
-    return matchesSearch && matchesCategory && matchesPayable;
+    const effectiveStatus = s.status || 'active';
+    let matchesStatus = true;
+    if (statusFilter === 'ACTIVE') {
+      matchesStatus = effectiveStatus === 'active';
+    } else if (statusFilter === 'INACTIVE') {
+      matchesStatus = effectiveStatus === 'inactive';
+    }
+
+    return matchesSearch && matchesCategory && matchesPayable && matchesStatus;
   });
 
-  // KPI Calculations
+  // KPI & Filter Counts
   const totalBalancePayable = suppliers.reduce((acc, s) => acc + (s.balancePayable || 0), 0);
   const suppliersWithDuesCount = suppliers.filter((s) => (s.balancePayable || 0) > 0).length;
+  const activeSuppliersCount = suppliers.filter((s) => (s.status || 'active') === 'active').length;
+  const inactiveSuppliersCount = suppliers.filter((s) => s.status === 'inactive').length;
 
   return (
     <div className="space-y-6">
@@ -427,6 +501,32 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
           ))}
         </div>
 
+        {/* Status Filter Pills */}
+        <div className="flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-xl border border-slate-300 dark:border-slate-700 shrink-0">
+          {([
+            { key: 'ALL', label: `All (${suppliers.length})` },
+            { key: 'ACTIVE', label: `Active (${activeSuppliersCount})` },
+            { key: 'INACTIVE', label: `Inactive (${inactiveSuppliersCount})` },
+          ] as const).map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setStatusFilter(item.key)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer ${
+                statusFilter === item.key
+                  ? item.key === 'ACTIVE'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : item.key === 'INACTIVE'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-sky-950 text-white dark:bg-amber-400 dark:text-slate-950 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
         {/* Category Filter Pills */}
         <div className="flex items-center space-x-1 p-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl overflow-x-auto shrink-0 max-w-full md:max-w-md">
           <button
@@ -469,13 +569,14 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
                 <th className="px-4 py-3.5">Bank Details</th>
                 <th className="px-4 py-3.5 text-center">Credit Terms</th>
                 <th className="px-4 py-3.5 text-right">Balance Payable</th>
-                <th className="px-4 py-3.5 text-right">Actions</th>
+                <th className="px-4 py-3.5 text-center">Status</th>
+                <th className="px-4 py-3.5 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filteredSuppliers.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-400">
+                  <td colSpan={10} className="py-12 text-center text-slate-400">
                     <Building2 className="w-8 h-8 mx-auto mb-2 opacity-40 text-amber-500" />
                     <p className="font-semibold text-sm text-slate-600 dark:text-slate-300">
                       No suppliers matched the current filters.
@@ -645,35 +746,60 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
                         )}
                       </td>
 
-                      {/* Actions */}
-                      <td className="px-4 py-3.5 text-right align-middle">
-                        <div className="flex items-center justify-end space-x-1">
+                      {/* Status (Interactive Toggle) */}
+                      <td className="px-4 py-3.5 text-center align-middle whitespace-nowrap">
+                        {(supplier.status || 'active') === 'active' ? (
                           <button
                             type="button"
-                            onClick={() => setSelectedKycSupplier(supplier)}
-                            className="p-1.5 text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                            title={supplier.documents?.length ? `View ${supplier.documents.length} KYC Documents` : "Attach KYC Documents"}
+                            onClick={() => handleToggleSupplierStatus(supplier.id)}
+                            className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-700 border border-emerald-200 hover:bg-emerald-200/80 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800/70 dark:hover:bg-emerald-900/60 font-bold text-xs px-3 py-1 rounded-full transition-all active:scale-95 cursor-pointer"
+                            title="Active — Click to toggle to Inactive"
                           >
-                            <Paperclip className="w-4 h-4" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            <span>Active</span>
                           </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSupplierStatus(supplier.id)}
+                            className="inline-flex items-center gap-1.5 bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-200/80 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800/70 dark:hover:bg-rose-900/60 font-bold text-xs px-3 py-1 rounded-full transition-all active:scale-95 cursor-pointer"
+                            title="Inactive — Click to toggle to Active"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                            <span>Inactive</span>
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-4 py-3.5 text-center align-middle">
+                        <div className="flex items-center justify-center space-x-1">
                           <button
                             type="button"
                             onClick={() => {
                               setEditingSupplier(supplier);
                               setIsAddModalOpen(true);
                             }}
-                            className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                            className="min-w-[32px] min-h-[32px] flex items-center justify-center p-1.5 text-slate-600 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                             title="Edit Supplier Profile"
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDeleteSupplier(supplier.id, supplier.companyName)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                            title="Delete Supplier Record"
+                            onClick={() => setSelectedKycSupplier(supplier)}
+                            className="min-w-[32px] min-h-[32px] flex items-center justify-center p-1.5 text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                            title={supplier.documents?.length ? `View ${supplier.documents.length} KYC Documents` : "Attach KYC Documents"}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Paperclip className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHistorySupplier(supplier)}
+                            className="min-w-[32px] min-h-[32px] flex items-center justify-center p-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900/60 rounded-lg transition-colors cursor-pointer"
+                            title="View Audit History"
+                          >
+                            <History className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -692,7 +818,7 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
                   <td className="px-4 py-3 text-right font-mono text-rose-300 text-sm">
                     ₹{filteredSuppliers.reduce((acc, s) => acc + (s.balancePayable || 0), 0).toLocaleString('en-IN')}
                   </td>
-                  <td className="px-4 py-3"></td>
+                  <td colSpan={2} className="px-4 py-3"></td>
                 </tr>
               </tfoot>
             )}
@@ -1028,6 +1154,17 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Supplier Audit & Revision History Modal (Conditionally Mounted) */}
+      {historySupplier && (
+        <AuditHistoryModal
+          entityType="Supplier"
+          entityId={historySupplier.supplierCode || historySupplier.id}
+          entityName={historySupplier.companyName}
+          auditHistory={historySupplier.auditHistory}
+          onClose={() => setHistorySupplier(null)}
+        />
       )}
 
     </div>
