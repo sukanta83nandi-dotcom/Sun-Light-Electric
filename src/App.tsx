@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Language, AppThemeMode } from './types';
+import { Language, AppThemeMode, ActiveTabType } from './types';
 import { Navbar } from './components/Navbar';
 import { DemoApp } from './components/DemoApp';
 import { LandingPage } from './components/LandingPage';
@@ -9,9 +9,7 @@ import { CompanyLogo } from './components/CompanyLogo';
 export default function App() {
   const [lang] = useState<Language>('en');
   const [appTheme, setAppTheme] = useState<AppThemeMode>('auto');
-  const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'inventory' | 'quotations' | 'invoices' | 'customers' | 'suppliers' | 'challans' | 'profit' | 'finance' | 'reports' | 'purchase_orders' | 'create_doc' | 'non_po_grn' | 'non-po-grn-report'
-  >('dashboard');
+  const [activeTab, setActiveTab] = useState<ActiveTabType>('dashboard');
 
   // Default to false so Landing Page is always the default initial screen
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {

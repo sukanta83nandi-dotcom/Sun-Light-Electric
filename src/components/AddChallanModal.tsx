@@ -65,9 +65,12 @@ export const AddChallanModal: React.FC<AddChallanModalProps> = ({
     existingChallan?.destinationSite || 'SOALUK, Pursurah, Hooghly - 712410'
   );
   
+  const [poNumber, setPoNumber] = useState<string>(existingChallan?.poNumber || '');
   const [challanInvoiceNo, setChallanInvoiceNo] = useState<string>(existingChallan?.challanInvoiceNo || '');
   const [challanDate, setChallanDate] = useState<string>(existingChallan?.challanDate || new Date().toISOString().split('T')[0]);
+  const [invoiceDate, setInvoiceDate] = useState<string>(existingChallan?.invoiceDate || existingChallan?.challanDate || new Date().toISOString().split('T')[0]);
   const [eWayBillNo, setEWayBillNo] = useState<string>(existingChallan?.eWayBillNo || '');
+  const [weighbridgeNo, setWeighbridgeNo] = useState<string>(existingChallan?.weighbridgeNo || '');
   const [vehicleNo, setVehicleNo] = useState<string>(existingChallan?.vehicleNo || '');
   const [receivedBy, setReceivedBy] = useState<string>(existingChallan?.receivedBy || 'Haradhan Patra');
   const [notes, setNotes] = useState<string>(existingChallan?.notes || '');
@@ -404,12 +407,15 @@ export const AddChallanModal: React.FC<AddChallanModalProps> = ({
     const newChallan: SupplierChallan = {
       id: existingChallan ? existingChallan.id : `CHALLAN-${Date.now()}`,
       challanCode: existingChallan ? (existingChallan.challanCode || `GRN-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`) : `GRN-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+      poNumber: poNumber.trim() || undefined,
       supplierId: supplierId || `SUP-CUSTOM-${Date.now()}`,
       supplierName: supplierName.trim(),
       supplierGstin: supplierGstin.trim(),
       challanInvoiceNo: challanInvoiceNo.trim(),
       challanDate: challanDate || new Date().toISOString().split('T')[0],
+      invoiceDate: invoiceDate || challanDate || new Date().toISOString().split('T')[0],
       eWayBillNo: eWayBillNo.trim() || undefined,
+      weighbridgeNo: weighbridgeNo.trim() || undefined,
       vehicleNo: vehicleNo.trim() || undefined,
       dispatchFrom: dispatchFrom.trim() || undefined,
       destinationSite: destinationSite.trim(),
@@ -569,6 +575,20 @@ export const AddChallanModal: React.FC<AddChallanModalProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              {/* PO No */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  PO Number (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={poNumber}
+                  onChange={(e) => setPoNumber(e.target.value)}
+                  placeholder="e.g. PO-2026-001"
+                  className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
               {/* Invoice / Challan Ref No */}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
@@ -584,16 +604,43 @@ export const AddChallanModal: React.FC<AddChallanModalProps> = ({
                 />
               </div>
 
-              {/* Challan Date */}
+              {/* Invoice Date */}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Challan Date <span className="text-rose-500">*</span>
+                  Invoice Date
+                </label>
+                <input
+                  type="date"
+                  value={invoiceDate}
+                  onChange={(e) => setInvoiceDate(e.target.value)}
+                  className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* GRN / Challan Date */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  GRN Date <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="date"
                   value={challanDate}
                   onChange={(e) => setChallanDate(e.target.value)}
                   required
+                  className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Weighbridge No */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Weighbridge No.
+                </label>
+                <input
+                  type="text"
+                  value={weighbridgeNo}
+                  onChange={(e) => setWeighbridgeNo(e.target.value)}
+                  placeholder="e.g. WB-PURS-094"
                   className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:ring-2 focus:ring-amber-500"
                 />
               </div>

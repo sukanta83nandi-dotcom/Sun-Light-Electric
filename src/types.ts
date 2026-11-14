@@ -251,3 +251,32 @@ export * from './types/invoice';
 export * from './types/finance';
 export * from './types/nonPoGrn';
 
+export type ActiveTabType =
+  | 'dashboard'
+  | 'inventory'
+  | 'quotations'
+  | 'quotation'
+  | 'invoices'
+  | 'invoice'
+  | 'customers'
+  | 'clients'
+  | 'suppliers'
+  | 'vendors'
+  | 'challans'
+  | 'grn'
+  | 'search-grn'
+  | 'profit'
+  | 'finance'
+  | 'payments'
+  | 'gst-summary'
+  | 'reports'
+  | 'purchase-report'
+  | 'invoice-report'
+  | 'purchase_orders'
+  | 'create-po'
+  | 'search-po'
+  | 'create_doc'
+  | 'non_po_grn'
+  | 'non-po-grn'
+  | 'non-po-grn-report';
+

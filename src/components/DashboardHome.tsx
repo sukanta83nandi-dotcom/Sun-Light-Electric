@@ -31,7 +31,6 @@ import {
   Layers,
   ChevronRight,
   RefreshCw,
-  Award,
   Activity,
 } from 'lucide-react';
 
@@ -654,17 +653,6 @@ export const DashboardHome: React.FC<DashboardHomeProps> = ({
               </div>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Footer Branding */}
-      <div className="pt-4 border-t border-slate-200 dark:border-slate-800/80 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 dark:text-slate-400 gap-2">
-        <div className="flex items-center space-x-2">
-          <Award className="w-4 h-4 text-amber-500" />
-          <span><strong>Sun Light Electric</strong> — Solar Quotation, Billing &amp; Operations Platform</span>
-        </div>
-        <div className="font-medium">
-          Designed &amp; Developed by <strong className="text-slate-800 dark:text-slate-200">Sukanta Nandi</strong>
         </div>
       </div>
     </div>

@@ -49,20 +49,24 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className={`${navClass} sticky top-0 z-50 transition-colors duration-300`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-20 gap-3">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16 sm:h-20 gap-2 sm:gap-3">
           
           {/* Brand & Logo */}
-          <div className="flex items-center space-x-3.5 cursor-pointer" onClick={onToggleAuthPortal}>
-            <div className="flex items-center justify-center">
-              <CompanyLogo className="h-12 sm:h-14 w-auto drop-shadow-md" />
+          <div className="flex items-center space-x-2 sm:space-x-3.5 cursor-pointer shrink-0 min-w-0" onClick={onToggleAuthPortal}>
+            <div className="flex items-center justify-center shrink-0">
+              <CompanyLogo 
+                className="h-7 w-auto sm:h-9 shrink-0 drop-shadow-md object-contain" 
+                allowUpload={false} 
+                showUploadTrigger={false} 
+              />
             </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="font-extrabold text-xl tracking-tight text-white">
+            <div className="min-w-0">
+              <div className="flex items-center space-x-1.5 sm:space-x-2 flex-nowrap">
+                <span className="font-bold whitespace-nowrap text-sm sm:text-base md:text-xl tracking-tight text-white">
                   {t.companyName}
                 </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 shadow-xs uppercase">
+                <span className="hidden xs:inline-block text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 shadow-xs uppercase whitespace-nowrap shrink-0">
                   Solar SaaS
                 </span>
               </div>

@@ -19,13 +19,16 @@ export interface ChallanItem {
 export interface SupplierChallan {
   id: string;
   challanCode?: string;        // e.g. "GRN-2026-001"
+  poNumber?: string;           // e.g. "PO-2026-001"
   supplierId: string;          // e.g. "SUP-007"
   supplierName: string;        // e.g. "LOOM SOLAR PRIVATE LIMITED"
   supplierGstin: string;       // e.g. "19AADCL6607J1Z9"
   supplierPhone?: string;
   challanInvoiceNo: string;    // e.g. "WB/SL/126/27"
-  challanDate: string;         // e.g. "2026-05-06"
+  challanDate: string;         // e.g. "2026-05-06" (GRN Date)
+  invoiceDate?: string;        // e.g. "2026-05-06" (Supplier Invoice Date)
   eWayBillNo?: string;         // e.g. "881682871188"
+  weighbridgeNo?: string;      // e.g. "WB-PURS-094"
   vehicleNo?: string;          // e.g. "WB18AP2877"
   dispatchFrom?: string;       // e.g. "Natibpur, NH-6, Howrah"
   destinationSite: string;     // e.g. "SOALUK, Pursurah, Hooghly"

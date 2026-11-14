@@ -12,6 +12,7 @@ import {
   ProjectExpenses,
   ClientDocument,
   ClientDocumentCategory,
+  ActiveTabType,
 } from '../types';
 import {
   INITIAL_CUSTOMERS,
@@ -34,7 +35,7 @@ const EditQuoteModal = lazy(() => import('./EditQuoteModal').then(m => ({ defaul
 const CancelQuoteModal = lazy(() => import('./CancelQuoteModal').then(m => ({ default: m.CancelQuoteModal })));
 const SerialScannerModal = lazy(() => import('./SerialScannerModal').then(m => ({ default: m.SerialScannerModal })));
 const SuppliersTab = lazy(() => import('./SuppliersTab').then(m => ({ default: m.SuppliersTab })));
-const InwardChallansTab = lazy(() => import('./InwardChallansTab').then(m => ({ default: m.InwardChallansTab })));
+const SearchGRN = lazy(() => import('./SearchGRN').then(m => ({ default: m.SearchGRN })));
 const FinanceTab = lazy(() => import('./FinanceTab').then(m => ({ default: m.FinanceTab })));
 const ReportsTab = lazy(() => import('./ReportsTab').then(m => ({ default: m.ReportsTab })));
 const PurchaseOrderTab = lazy(() => import('./PurchaseOrderTab').then(m => ({ default: m.PurchaseOrderTab })));
@@ -113,8 +114,8 @@ import { exportQuotationsToExcel } from '../utils/quotationExportHelper';
 
 interface DemoAppProps {
   lang: Language;
-  activeTab?: 'dashboard' | 'inventory' | 'quotations' | 'invoices' | 'customers' | 'suppliers' | 'challans' | 'profit' | 'finance' | 'reports' | 'purchase_orders' | 'create_doc' | 'non_po_grn' | 'non-po-grn-report';
-  setActiveTab?: (tab: 'dashboard' | 'inventory' | 'quotations' | 'invoices' | 'customers' | 'suppliers' | 'challans' | 'profit' | 'finance' | 'reports' | 'purchase_orders' | 'create_doc' | 'non_po_grn' | 'non-po-grn-report') => void;
+  activeTab?: ActiveTabType;
+  setActiveTab?: (tab: ActiveTabType) => void;
 }
 
 export const DemoApp: React.FC<DemoAppProps> = ({
@@ -144,169 +145,127 @@ export const DemoApp: React.FC<DemoAppProps> = ({
     window.open(`https://wa.me/${targetPhone}?text=${message}`, '_blank');
   };
 
-  const [internalActiveTab, setInternalActiveTab] = useState<
-    'dashboard' | 'inventory' | 'quotations' | 'invoices' | 'customers' | 'suppliers' | 'challans' | 'profit' | 'finance' | 'reports' | 'purchase_orders' | 'create_doc' | 'non_po_grn'
-  >('dashboard');
-
+  const [internalActiveTab, setInternalActiveTab] = useState<ActiveTabType>('dashboard');
   const activeTab = activeTabProp !== undefined ? activeTabProp : internalActiveTab;
-  const setActiveTab = (
-    tab: 'dashboard' | 'inventory' | 'quotations' | 'invoices' | 'customers' | 'suppliers' | 'challans' | 'profit' | 'finance' | 'reports' | 'purchase_orders' | 'create_doc' | 'non_po_grn' | 'non-po-grn-report'
-  ) => {
+
+  // Active sub-views for sub-modules
+  const [poSubView, setPoSubView] = useState<'create_po' | 'search_po'>('search_po');
+  const [reportSubView, setReportSubView] = useState<'purchase' | 'invoice' | 'non_po_grn'>('purchase');
+  const [financeSubView, setFinanceSubView] = useState<
+    'debit_entry' | 'debit_dashboard' | 'credit_entry' | 'credit_dashboard'
+  >('debit_dashboard');
+
+  const setActiveTab = (tab: ActiveTabType) => {
     if (tab === 'non-po-grn-report') {
       setReportSubView('non_po_grn');
-      if (setActiveTabProp) setActiveTabProp('reports');
-      setInternalActiveTab('reports');
-      return;
+    } else if (tab === 'purchase-report') {
+      setReportSubView('purchase');
+    } else if (tab === 'invoice-report') {
+      setReportSubView('invoice');
+    } else if (tab === 'create-po') {
+      setPoSubView('create_po');
+    } else if (tab === 'search-po') {
+      setPoSubView('search_po');
+    } else if (tab === 'non-po-grn') {
+      setNonPoGrnSubView('search');
     }
     if (setActiveTabProp) setActiveTabProp(tab);
     setInternalActiveTab(tab);
   };
 
-  // Operation Dropdown State (Enterprise ERP Navigation)
-  const [isOperationDropdownOpen, setIsOperationDropdownOpen] = useState(false);
-  const operationDropdownRef = React.useRef<HTMLDivElement>(null);
-  const operationTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  // Unified Dropdown State Management (Dual trigger: Hover on Desktop + Click/Touch on Mobile)
+  type DropdownMenuKey = 'operation' | 'purchase_order' | 'backoffice' | 'finance' | 'report';
+  const [openMenu, setOpenMenu] = useState<DropdownMenuKey | null>(null);
+  const navBarRef = React.useRef<HTMLDivElement>(null);
+  const closeTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
-  const isOperationActive =
-    activeTab === 'challans' || activeTab === 'non_po_grn' || activeTab === 'quotations' || activeTab === 'invoices';
-
-  const handleOperationMouseEnter = () => {
-    if (operationTimeoutRef.current) clearTimeout(operationTimeoutRef.current);
-    setIsOperationDropdownOpen(true);
+  const handleMenuMouseEnter = (menuKey: DropdownMenuKey) => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    setOpenMenu(menuKey);
   };
 
-  const handleOperationMouseLeave = () => {
-    operationTimeoutRef.current = setTimeout(() => {
-      setIsOperationDropdownOpen(false);
-    }, 200);
+  const handleMenuMouseLeave = () => {
+    if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+    closeTimeoutRef.current = setTimeout(() => {
+      setOpenMenu(null);
+    }, 220);
   };
 
-  // Finance Dropdown State (Enterprise ERP Navigation)
-  const [isFinanceDropdownOpen, setIsFinanceDropdownOpen] = useState(false);
-  const financeDropdownRef = React.useRef<HTMLDivElement>(null);
-  const financeTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-
-  // Active sub-view for Finance module:
-  // 'debit_entry' | 'debit_dashboard' | 'credit_entry' | 'credit_dashboard'
-  const [financeSubView, setFinanceSubView] = useState<
-    'debit_entry' | 'debit_dashboard' | 'credit_entry' | 'credit_dashboard'
-  >('debit_dashboard');
-
-  const isFinanceActive = activeTab === 'finance';
-
-  const handleFinanceMouseEnter = () => {
-    if (financeTimeoutRef.current) clearTimeout(financeTimeoutRef.current);
-    setIsFinanceDropdownOpen(true);
+  const handleMenuToggleClick = (e: React.MouseEvent, menuKey: DropdownMenuKey) => {
+    e.stopPropagation();
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    setOpenMenu((prev) => (prev === menuKey ? null : menuKey));
   };
 
-  const handleFinanceMouseLeave = () => {
-    financeTimeoutRef.current = setTimeout(() => {
-      setIsFinanceDropdownOpen(false);
-    }, 200);
-  };
-
-  // Report Dropdown State (Purchase, Invoice & Non PO GRN Reports)
-  const [isReportDropdownOpen, setIsReportDropdownOpen] = useState(false);
-  const reportDropdownRef = React.useRef<HTMLDivElement>(null);
-  const reportTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-
-  // Active sub-view for Reports module: 'purchase' | 'invoice' | 'non_po_grn'
-  const [reportSubView, setReportSubView] = useState<'purchase' | 'invoice' | 'non_po_grn'>('purchase');
-
-  const isReportActive = activeTab === 'reports' || (activeTab as any) === 'non-po-grn-report';
-
-  const handleReportMouseEnter = () => {
-    if (reportTimeoutRef.current) clearTimeout(reportTimeoutRef.current);
-    setIsReportDropdownOpen(true);
-  };
-
-  const handleReportMouseLeave = () => {
-    reportTimeoutRef.current = setTimeout(() => {
-      setIsReportDropdownOpen(false);
-    }, 200);
-  };
-
-  // BackOffice Dropdown State (Inventory, Customers, Suppliers)
-  const [isBackOfficeDropdownOpen, setIsBackOfficeDropdownOpen] = useState(false);
-  const backOfficeDropdownRef = React.useRef<HTMLDivElement>(null);
-  const backOfficeTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-
-  const isBackOfficeActive =
-    activeTab === 'inventory' || activeTab === 'customers' || activeTab === 'suppliers';
-
-  const handleBackOfficeMouseEnter = () => {
-    if (backOfficeTimeoutRef.current) clearTimeout(backOfficeTimeoutRef.current);
-    setIsBackOfficeDropdownOpen(true);
-  };
-
-  const handleBackOfficeMouseLeave = () => {
-    backOfficeTimeoutRef.current = setTimeout(() => {
-      setIsBackOfficeDropdownOpen(false);
-    }, 200);
-  };
-
-  // Purchase Order Dropdown State (Enterprise ERP Navigation)
-  const [isPoDropdownOpen, setIsPoDropdownOpen] = useState(false);
-  const poDropdownRef = React.useRef<HTMLDivElement>(null);
-  const poTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-  const [poSubView, setPoSubView] = useState<'create_po' | 'search_po'>('search_po');
-
-  const isPoActive = activeTab === 'purchase_orders';
-
-  const handlePoMouseEnter = () => {
-    if (poTimeoutRef.current) clearTimeout(poTimeoutRef.current);
-    setIsPoDropdownOpen(true);
-  };
-
-  const handlePoMouseLeave = () => {
-    poTimeoutRef.current = setTimeout(() => {
-      setIsPoDropdownOpen(false);
-    }, 200);
-  };
-
+  // Click-outside listener for both mousedown and touchstart
   useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (
-        operationDropdownRef.current &&
-        !operationDropdownRef.current.contains(e.target as Node)
-      ) {
-        setIsOperationDropdownOpen(false);
-      }
-      if (
-        poDropdownRef.current &&
-        !poDropdownRef.current.contains(e.target as Node)
-      ) {
-        setIsPoDropdownOpen(false);
-      }
-      if (
-        backOfficeDropdownRef.current &&
-        !backOfficeDropdownRef.current.contains(e.target as Node)
-      ) {
-        setIsBackOfficeDropdownOpen(false);
-      }
-      if (
-        financeDropdownRef.current &&
-        !financeDropdownRef.current.contains(e.target as Node)
-      ) {
-        setIsFinanceDropdownOpen(false);
-      }
-      if (
-        reportDropdownRef.current &&
-        !reportDropdownRef.current.contains(e.target as Node)
-      ) {
-        setIsReportDropdownOpen(false);
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      if (navBarRef.current && !navBarRef.current.contains(e.target as Node)) {
+        setOpenMenu(null);
       }
     };
     document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
     return () => {
       document.removeEventListener('mousedown', handleOutsideClick);
-      if (operationTimeoutRef.current) clearTimeout(operationTimeoutRef.current);
-      if (poTimeoutRef.current) clearTimeout(poTimeoutRef.current);
-      if (backOfficeTimeoutRef.current) clearTimeout(backOfficeTimeoutRef.current);
-      if (financeTimeoutRef.current) clearTimeout(financeTimeoutRef.current);
-      if (reportTimeoutRef.current) clearTimeout(reportTimeoutRef.current);
+      document.removeEventListener('touchstart', handleOutsideClick);
+      if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
     };
   }, []);
+
+  const isOperationDropdownOpen = openMenu === 'operation';
+  const isPoDropdownOpen = openMenu === 'purchase_order';
+  const isBackOfficeDropdownOpen = openMenu === 'backoffice';
+  const isFinanceDropdownOpen = openMenu === 'finance';
+  const isReportDropdownOpen = openMenu === 'report';
+
+  const isOperationActive =
+    activeTab === 'challans' ||
+    activeTab === 'grn' ||
+    activeTab === 'search-grn' ||
+    activeTab === 'non_po_grn' ||
+    activeTab === 'non-po-grn' ||
+    activeTab === 'quotations' ||
+    activeTab === 'quotation' ||
+    activeTab === 'invoices' ||
+    activeTab === 'invoice';
+
+  const isPoActive =
+    activeTab === 'purchase_orders' ||
+    activeTab === 'create-po' ||
+    activeTab === 'search-po';
+
+  const isBackOfficeActive =
+    activeTab === 'inventory' ||
+    activeTab === 'customers' ||
+    activeTab === 'clients' ||
+    activeTab === 'suppliers' ||
+    activeTab === 'vendors';
+
+  const isFinanceActive =
+    activeTab === 'finance' ||
+    activeTab === 'payments' ||
+    activeTab === 'gst-summary';
+
+  const isReportActive =
+    activeTab === 'reports' ||
+    activeTab === 'purchase-report' ||
+    activeTab === 'invoice-report' ||
+    activeTab === 'non-po-grn-report' ||
+    (activeTab as any) === 'non_po_grn_report';
+
+  const isQuotationsActive = activeTab === 'quotations' || activeTab === 'quotation';
+  const isInvoicesActive =
+    activeTab === 'invoices' ||
+    activeTab === 'invoice' ||
+    activeTab === 'payments' ||
+    activeTab === 'gst-summary';
 
   const handleUpdateInvoiceExpenses = (invoiceId: string, expenses: ProjectExpenses) => {
     setDocuments((prevDocs) =>
@@ -584,6 +543,8 @@ export const DemoApp: React.FC<DemoAppProps> = ({
       challanDate: string;
       eWayBillNo?: string;
       vehicleNo?: string;
+      weighbridgeNo?: string;
+      grnWeight?: string;
       receivedBy: string;
       notes?: string;
     }
@@ -615,6 +576,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
           quantity: addedQty,
           receivedBy: grnMetadata.receivedBy || 'Haradhan Patra',
           supplierInvoiceNo: grnMetadata.challanInvoiceNo,
+          weighbridgeNo: grnMetadata.weighbridgeNo,
           notes: grnMetadata.notes,
           serialNumbers: itemSerials,
         });
@@ -718,12 +680,15 @@ export const DemoApp: React.FC<DemoAppProps> = ({
       const newChallan: SupplierChallan = {
         id: `CHAL-${Date.now()}`,
         challanCode: grnNo,
+        poNumber: targetPO.poNumber,
         supplierId: targetPO.supplierId,
         supplierName: targetPO.supplierName,
         supplierGstin: targetPO.supplierGstin || '',
         challanInvoiceNo: grnMetadata.challanInvoiceNo || targetPO.poNumber,
         challanDate: grnMetadata.challanDate || new Date().toISOString().split('T')[0],
+        invoiceDate: grnMetadata.challanDate || new Date().toISOString().split('T')[0],
         eWayBillNo: grnMetadata.eWayBillNo,
+        weighbridgeNo: grnMetadata.weighbridgeNo,
         vehicleNo: grnMetadata.vehicleNo,
         dispatchFrom: targetPO.dispatchThrough || 'Supplier Facility',
         destinationSite: targetPO.dispatchTo || 'SOALUK, Pursurah, Hooghly',
@@ -1263,56 +1228,56 @@ export const DemoApp: React.FC<DemoAppProps> = ({
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       
       {/* Official Business Credentials Header Card */}
-      <div className="bg-gradient-to-r from-sky-300/90 via-sky-200 to-sky-300/90 dark:from-sky-900 dark:via-slate-900 dark:to-sky-900 text-slate-900 dark:text-slate-100 rounded-2xl md:rounded-3xl p-6 border border-sky-400 dark:border-sky-700/80 shadow-md shadow-sky-500/15 flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all">
-        <div className="flex items-center space-x-5">
-          <div className="flex items-center shrink-0">
-            <CompanyLogo className="h-16 sm:h-20 w-auto shadow-md rounded-2xl shrink-0" />
+      <div className="bg-gradient-to-r from-sky-300/90 via-sky-200 to-sky-300/90 dark:from-sky-900 dark:via-slate-900 dark:to-sky-900 text-slate-900 dark:text-slate-100 rounded-2xl md:rounded-3xl p-4 sm:p-6 border border-sky-400 dark:border-sky-700/80 shadow-md shadow-sky-500/15 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-5 transition-all">
+        <div className="flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-4 sm:gap-5">
+          <div className="flex items-center justify-center shrink-0">
+            <CompanyLogo 
+              className="h-14 sm:h-20 w-auto rounded-xl shadow-xs shrink-0 object-contain mx-auto sm:mx-0" 
+              allowUpload={false} 
+              showUploadTrigger={false} 
+            />
           </div>
           <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-extrabold text-sky-950 dark:text-sky-100 tracking-tight">SUN LIGHT ELECTRIC</h1>
-              <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 shadow-2xs">
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+              <h1 className="text-lg sm:text-xl font-extrabold text-sky-950 dark:text-sky-100 tracking-tight whitespace-nowrap">SUN LIGHT ELECTRIC</h1>
+              <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 shadow-2xs whitespace-nowrap">
                 Domestic &amp; Commercial Solar Solutions
               </span>
             </div>
-            <p className="text-xs text-sky-900 dark:text-sky-200 font-semibold mt-1 flex items-center gap-1.5">
+            <p className="text-xs text-sky-900 dark:text-sky-200 font-semibold mt-1 flex items-center justify-center sm:justify-start gap-1.5">
               <span>SOALUK, PURSURAH, HOOGHLY, WEST BENGAL, 712410</span>
             </p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-sky-900 dark:text-sky-200 mt-2 font-mono">
+            <div className="flex flex-wrap justify-center sm:justify-start gap-x-4 gap-y-1 text-xs text-sky-900 dark:text-sky-200 mt-2 font-mono">
               <div>Phone: <strong className="text-sky-950 dark:text-sky-100 font-extrabold">+91 7908798079</strong></div>
               <div>Email: <strong className="text-sky-950 dark:text-sky-100 font-extrabold">sunlightelectric.1984@gmail.com</strong></div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white/95 dark:bg-sky-950/90 p-3.5 rounded-xl border border-sky-300 dark:border-sky-700/80 text-xs space-y-1 font-mono shrink-0 shadow-2xs text-sky-950 dark:text-sky-100 flex flex-col justify-between">
-          <div>
-            <div className="text-amber-800 dark:text-amber-400 font-extrabold uppercase text-[10px] tracking-wider">Tax &amp; Legal Credentials</div>
-            <div>GSTIN: <strong className="text-sky-950 dark:text-white font-extrabold">19AZEPP1218L1Z5</strong></div>
-            <div>PAN: <strong className="text-sky-950 dark:text-white font-extrabold">AZEPP1218L</strong> | State Code: <strong className="text-sky-950 dark:text-white font-extrabold">WB 19</strong></div>
-            <div>Owner: <strong className="text-sky-950 dark:text-white font-extrabold">Haradhan Patra</strong></div>
-          </div>
-          <button
-            type="button"
-            onClick={handleClearAllData}
-            className="mt-2 text-[10px] text-rose-600 dark:text-rose-400 hover:text-white hover:bg-rose-600 dark:hover:bg-rose-700 border border-rose-300 dark:border-rose-800 px-2 py-1 rounded-md transition-colors font-sans font-bold flex items-center gap-1 cursor-pointer w-fit"
-            title="Wipe all demo or test data and reset to fresh empty registers"
-          >
-            <Trash2 className="w-3 h-3 text-rose-500" />
-            <span>Reset / Clear All Data</span>
-          </button>
+        <div className="bg-white/95 dark:bg-sky-950/90 p-3.5 rounded-xl border border-sky-300 dark:border-sky-700/80 text-xs space-y-1 font-mono shrink-0 shadow-2xs text-sky-950 dark:text-sky-100 flex flex-col justify-center">
+          <div className="text-amber-800 dark:text-amber-400 font-extrabold uppercase text-[10px] tracking-wider">Tax &amp; Legal Credentials</div>
+          <div>GSTIN: <strong className="text-sky-950 dark:text-white font-extrabold">19AZEPP1218L1Z5</strong></div>
+          <div>PAN: <strong className="text-sky-950 dark:text-white font-extrabold">AZEPP1218L</strong> | State Code: <strong className="text-sky-950 dark:text-white font-extrabold">WB 19</strong></div>
+          <div>Owner: <strong className="text-sky-950 dark:text-white font-extrabold">Haradhan Patra</strong></div>
         </div>
       </div>
 
 
 
       {/* Main Tabs Navigation */}
-      <div className="w-full bg-gradient-to-r from-sky-100 via-sky-50 to-sky-100 dark:from-sky-950/70 dark:via-slate-900 dark:to-sky-950/70 border border-sky-300 dark:border-sky-800/80 rounded-2xl md:rounded-3xl p-2 md:p-2.5 shadow-md shadow-sky-500/10 flex items-center justify-between gap-2 transition-all">
-        <div className="flex flex-wrap gap-1.5 w-full">
+      <div
+        ref={navBarRef}
+        className="w-full relative z-40 bg-gradient-to-r from-sky-100 via-sky-50 to-sky-100 dark:from-sky-950/70 dark:via-slate-900 dark:to-sky-950/70 border border-sky-300 dark:border-sky-800/80 rounded-2xl md:rounded-3xl p-2 md:p-2.5 shadow-md shadow-sky-500/10 transition-all"
+      >
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full overflow-visible">
           {/* 1. Dashboard Tab - Amber / Solar Gold */}
           <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer ${
+            type="button"
+            onClick={() => {
+              setActiveTab('dashboard');
+              setOpenMenu(null);
+            }}
+            className={`shrink-0 flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer whitespace-nowrap ${
               activeTab === 'dashboard'
                 ? 'bg-gradient-to-b from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-[0_6px_0_#b45309,0_10px_15px_rgba(245,158,11,0.35)] border border-amber-300/80 active:translate-y-1 active:shadow-[0_2px_0_#b45309]'
                 : 'bg-white/80 dark:bg-slate-800/80 text-sky-900 dark:text-sky-200 border border-sky-200/80 dark:border-sky-800/60 hover:text-sky-950 hover:bg-sky-200/70 dark:hover:bg-sky-900/60 font-semibold hover:-translate-y-0.5 hover:shadow-md'
@@ -1324,15 +1289,14 @@ export const DemoApp: React.FC<DemoAppProps> = ({
 
           {/* 2. Operation Dropdown Menu (Classic ERP Navigation) */}
           <div
-            ref={operationDropdownRef}
-            onMouseEnter={handleOperationMouseEnter}
-            onMouseLeave={handleOperationMouseLeave}
-            className="relative"
+            onMouseEnter={() => handleMenuMouseEnter('operation')}
+            onMouseLeave={handleMenuMouseLeave}
+            className="relative shrink-0"
           >
             <button
               type="button"
-              onClick={() => setIsOperationDropdownOpen((prev) => !prev)}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none ${
+              onClick={(e) => handleMenuToggleClick(e, 'operation')}
+              className={`shrink-0 flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none whitespace-nowrap ${
                 isOperationActive
                   ? 'bg-gradient-to-b from-blue-500 to-indigo-600 text-white font-extrabold shadow-[0_6px_0_#1d4ed8,0_10px_15px_rgba(59,130,246,0.35)] border border-blue-400/80 active:translate-y-1 active:shadow-[0_2px_0_#1d4ed8]'
                   : 'bg-white/80 dark:bg-slate-800/80 text-sky-900 dark:text-sky-200 border border-sky-200/80 dark:border-sky-800/60 hover:text-sky-950 hover:bg-sky-200/70 dark:hover:bg-sky-900/60 font-semibold hover:-translate-y-0.5 hover:shadow-md'
@@ -1344,7 +1308,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
               <span>Operation</span>
               {isOperationActive && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20 text-white font-mono font-bold tracking-tight">
-                  {activeTab === 'challans' ? 'GRN' : activeTab === 'non_po_grn' ? 'Non PO GRN' : activeTab === 'quotations' ? 'Quotation' : 'Invoice'}
+                  {activeTab === 'challans' || activeTab === 'grn' || activeTab === 'search-grn' ? 'Search GRN' : activeTab === 'non_po_grn' || activeTab === 'non-po-grn' ? 'Non PO GRN' : activeTab === 'quotations' || activeTab === 'quotation' ? 'Quotation' : 'Invoice'}
                 </span>
               )}
               <ChevronDown
@@ -1357,7 +1321,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             {/* Floating Dropdown Menu */}
             {isOperationDropdownOpen && (
               <div
-                className="absolute left-0 top-full mt-2 w-64 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-2 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
+                className="absolute left-0 top-full mt-2 w-64 sm:w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl shadow-slate-900/10 p-2 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
                 role="menu"
               >
                 <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800 mb-1 flex items-center justify-between">
@@ -1365,15 +1329,15 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   <span className="text-[9px] font-mono text-slate-400">ERP</span>
                 </div>
 
-                {/* Item 1: GRN (Goods Received Note) */}
+                {/* Item 1: Search GRN (Goods Received Note) */}
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveTab('challans');
-                    setIsOperationDropdownOpen(false);
+                    setActiveTab('search-grn');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
-                    activeTab === 'challans'
+                    activeTab === 'challans' || activeTab === 'grn' || activeTab === 'search-grn'
                       ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 font-extrabold border border-amber-300/40 dark:border-amber-700/50'
                       : ''
                   }`}
@@ -1384,25 +1348,25 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                       <Truck className="w-4 h-4" />
                     </div>
                     <div className="text-left">
-                      <div className="font-bold">GRN</div>
+                      <div className="font-bold">Search GRN</div>
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
                         Goods Received Notes &amp; Stock Inward ({challans.length})
                       </div>
                     </div>
                   </div>
-                  {activeTab === 'challans' && <Check className="w-4 h-4 text-amber-600 dark:text-amber-400" />}
+                  {(activeTab === 'challans' || activeTab === 'grn' || activeTab === 'search-grn') && <Check className="w-4 h-4 text-amber-600 dark:text-amber-400" />}
                 </button>
 
-                {/* Item 2: Non PO GRN (General Expense & Direct Inward - Non-Inventory) [NEW] */}
+                {/* Item 2: Non PO GRN (General Expense & Direct Inward - Non-Inventory) */}
                 <button
                   type="button"
                   onClick={() => {
                     setNonPoGrnSubView('search');
-                    setActiveTab('non_po_grn');
-                    setIsOperationDropdownOpen(false);
+                    setActiveTab('non-po-grn');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
-                    activeTab === 'non_po_grn'
+                    activeTab === 'non_po_grn' || activeTab === 'non-po-grn'
                       ? 'bg-teal-500/15 text-teal-700 dark:text-teal-400 font-extrabold border border-teal-300/40 dark:border-teal-700/50'
                       : ''
                   }`}
@@ -1415,22 +1379,22 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                     <div className="text-left">
                       <div className="font-bold">Non PO GRN</div>
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        General Expense &amp; Direct Inward - Non-Inventory ({nonPoGrnRecords.length})
+                        General Expense &amp; Direct Inward ({nonPoGrnRecords.length})
                       </div>
                     </div>
                   </div>
-                  {activeTab === 'non_po_grn' && <Check className="w-4 h-4 text-teal-600 dark:text-teal-400" />}
+                  {(activeTab === 'non_po_grn' || activeTab === 'non-po-grn') && <Check className="w-4 h-4 text-teal-600 dark:text-teal-400" />}
                 </button>
 
                 {/* Item 3: Quotation */}
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveTab('quotations');
-                    setIsOperationDropdownOpen(false);
+                    setActiveTab('quotation');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
-                    activeTab === 'quotations'
+                    activeTab === 'quotations' || activeTab === 'quotation'
                       ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400 font-extrabold border border-blue-300/40 dark:border-blue-700/50'
                       : ''
                   }`}
@@ -1447,18 +1411,18 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                       </div>
                     </div>
                   </div>
-                  {activeTab === 'quotations' && <Check className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                  {(activeTab === 'quotations' || activeTab === 'quotation') && <Check className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
                 </button>
 
-                {/* Item 3: Invoice */}
+                {/* Item 4: Invoice */}
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveTab('invoices');
-                    setIsOperationDropdownOpen(false);
+                    setActiveTab('invoice');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
-                    activeTab === 'invoices'
+                    activeTab === 'invoices' || activeTab === 'invoice'
                       ? 'bg-purple-500/15 text-purple-700 dark:text-purple-400 font-extrabold border border-purple-300/40 dark:border-purple-700/50'
                       : ''
                   }`}
@@ -1475,7 +1439,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                       </div>
                     </div>
                   </div>
-                  {activeTab === 'invoices' && <Check className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
+                  {(activeTab === 'invoices' || activeTab === 'invoice') && <Check className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
                 </button>
               </div>
             )}
@@ -1483,15 +1447,14 @@ export const DemoApp: React.FC<DemoAppProps> = ({
 
           {/* 3. Purchase Order Dropdown Menu (Enterprise Procurement Navigation) */}
           <div
-            ref={poDropdownRef}
-            onMouseEnter={handlePoMouseEnter}
-            onMouseLeave={handlePoMouseLeave}
-            className="relative"
+            onMouseEnter={() => handleMenuMouseEnter('purchase_order')}
+            onMouseLeave={handleMenuMouseLeave}
+            className="relative shrink-0"
           >
             <button
               type="button"
-              onClick={() => setIsPoDropdownOpen((prev) => !prev)}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none ${
+              onClick={(e) => handleMenuToggleClick(e, 'purchase_order')}
+              className={`shrink-0 flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none whitespace-nowrap ${
                 isPoActive
                   ? 'bg-gradient-to-b from-[#0e7490] to-[#155e75] text-white font-extrabold shadow-[0_6px_0_#164e63,0_10px_15px_rgba(14,116,144,0.35)] border border-cyan-400/80 active:translate-y-1 active:shadow-[0_2px_0_#164e63]'
                   : 'bg-white/80 dark:bg-slate-800/80 text-sky-900 dark:text-sky-200 border border-sky-200/80 dark:border-sky-800/60 hover:text-sky-950 hover:bg-sky-200/70 dark:hover:bg-sky-900/60 font-semibold hover:-translate-y-0.5 hover:shadow-md'
@@ -1503,7 +1466,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
               <span>Purchase Order</span>
               {isPoActive && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20 text-white font-mono font-bold tracking-tight">
-                  {poSubView === 'create_po' ? 'Create' : 'Search'}
+                  {activeTab === 'create-po' || poSubView === 'create_po' ? 'Create PO' : 'Search PO'}
                 </span>
               )}
               <ChevronDown
@@ -1516,7 +1479,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             {/* Floating Dropdown Menu */}
             {isPoDropdownOpen && (
               <div
-                className="absolute left-0 top-full mt-2 w-64 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-2 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
+                className="absolute left-0 top-full mt-2 w-64 sm:w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl shadow-slate-900/10 p-2 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
                 role="menu"
               >
                 <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800 mb-1 flex items-center justify-between">
@@ -1529,11 +1492,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   type="button"
                   onClick={() => {
                     setPoSubView('create_po');
-                    setActiveTab('purchase_orders');
-                    setIsPoDropdownOpen(false);
+                    setActiveTab('create-po');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
-                    isPoActive && poSubView === 'create_po'
+                    activeTab === 'create-po' || (isPoActive && poSubView === 'create_po')
                       ? 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400 font-extrabold border border-cyan-300/40 dark:border-cyan-700/50'
                       : ''
                   }`}
@@ -1550,7 +1513,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                       </div>
                     </div>
                   </div>
-                  {isPoActive && poSubView === 'create_po' && (
+                  {(activeTab === 'create-po' || (isPoActive && poSubView === 'create_po')) && (
                     <Check className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
                   )}
                 </button>
@@ -1560,11 +1523,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   type="button"
                   onClick={() => {
                     setPoSubView('search_po');
-                    setActiveTab('purchase_orders');
-                    setIsPoDropdownOpen(false);
+                    setActiveTab('search-po');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
-                    isPoActive && poSubView === 'search_po'
+                    activeTab === 'search-po' || (isPoActive && poSubView === 'search_po')
                       ? 'bg-teal-500/15 text-teal-700 dark:text-teal-400 font-extrabold border border-teal-300/40 dark:border-teal-700/50'
                       : ''
                   }`}
@@ -1577,11 +1540,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                     <div className="text-left">
                       <div className="font-bold">Search PO</div>
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        Track status &amp; inward GRN ({purchaseOrders.length})
+                        PO Register &amp; Multi-stage GRN ({purchaseOrders.length})
                       </div>
                     </div>
                   </div>
-                  {isPoActive && poSubView === 'search_po' && (
+                  {(activeTab === 'search-po' || (isPoActive && poSubView === 'search_po')) && (
                     <Check className="w-4 h-4 text-teal-600 dark:text-teal-400" />
                   )}
                 </button>
@@ -1589,17 +1552,16 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             )}
           </div>
 
-          {/* BackOffice Dropdown Menu (Stock Inventory, Customer, Supplier) */}
+          {/* 4. BackOffice Dropdown Menu (Stock Inventory, Customer, Supplier) */}
           <div
-            ref={backOfficeDropdownRef}
-            onMouseEnter={handleBackOfficeMouseEnter}
-            onMouseLeave={handleBackOfficeMouseLeave}
-            className="relative"
+            onMouseEnter={() => handleMenuMouseEnter('backoffice')}
+            onMouseLeave={handleMenuMouseLeave}
+            className="relative shrink-0"
           >
             <button
               type="button"
-              onClick={() => setIsBackOfficeDropdownOpen((prev) => !prev)}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none ${
+              onClick={(e) => handleMenuToggleClick(e, 'backoffice')}
+              className={`shrink-0 flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none whitespace-nowrap ${
                 isBackOfficeActive
                   ? 'bg-gradient-to-b from-[#0f4e56] to-[#005963] text-white font-extrabold shadow-[0_6px_0_#062a2f,0_10px_15px_rgba(15,78,86,0.35)] border border-teal-500/50 active:translate-y-1 active:shadow-[0_2px_0_#062a2f]'
                   : 'bg-white/80 dark:bg-slate-800/80 text-sky-900 dark:text-sky-200 border border-sky-200/80 dark:border-sky-800/60 hover:text-sky-950 hover:bg-sky-200/70 dark:hover:bg-sky-900/60 font-semibold hover:-translate-y-0.5 hover:shadow-md'
@@ -1613,9 +1575,9 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20 text-white font-mono font-bold tracking-tight">
                   {activeTab === 'inventory'
                     ? 'Inventory'
-                    : activeTab === 'customers'
-                    ? 'Customer'
-                    : 'Supplier'}
+                    : activeTab === 'suppliers' || activeTab === 'vendors'
+                    ? 'Vendors'
+                    : 'Clients'}
                 </span>
               )}
               <ChevronDown
@@ -1628,7 +1590,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             {/* Floating Dropdown Card */}
             {isBackOfficeDropdownOpen && (
               <div
-                className="absolute left-0 top-full mt-2 w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-2.5 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
+                className="absolute left-0 top-full mt-2 w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl shadow-slate-900/10 p-2.5 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
                 role="menu"
               >
                 {/* Header Badge */}
@@ -1644,7 +1606,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   type="button"
                   onClick={() => {
                     setActiveTab('inventory');
-                    setIsBackOfficeDropdownOpen(false);
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
                     activeTab === 'inventory'
@@ -1660,7 +1622,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                     <div className="text-left">
                       <div className="font-bold text-slate-900 dark:text-slate-100">Stock Inventory</div>
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        Solar panels, inverters, stock counts &amp; serial tracking
+                        Solar panels, inverters &amp; serials ({inventory.length})
                       </div>
                     </div>
                   </div>
@@ -1669,45 +1631,15 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   )}
                 </button>
 
-                {/* Item 2: Customer */}
+                {/* Item 2: Vendors / Suppliers */}
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveTab('customers');
-                    setIsBackOfficeDropdownOpen(false);
+                    setActiveTab('vendors');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
-                    activeTab === 'customers'
-                      ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400 font-extrabold border border-rose-300/40 dark:border-rose-700/50'
-                      : ''
-                  }`}
-                  role="menuitem"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-1.5 rounded-lg bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 shrink-0">
-                      <Users className="w-4 h-4" />
-                    </div>
-                    <div className="text-left">
-                      <div className="font-bold text-slate-900 dark:text-slate-100">Customer</div>
-                      <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        Client directory, site details &amp; contact records
-                      </div>
-                    </div>
-                  </div>
-                  {activeTab === 'customers' && (
-                    <Check className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-                  )}
-                </button>
-
-                {/* Item 3: Supplier */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('suppliers');
-                    setIsBackOfficeDropdownOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
-                    activeTab === 'suppliers'
+                    activeTab === 'suppliers' || activeTab === 'vendors'
                       ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 font-extrabold border border-amber-300/40 dark:border-amber-700/50'
                       : ''
                   }`}
@@ -1718,31 +1650,60 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                       <Building2 className="w-4 h-4" />
                     </div>
                     <div className="text-left">
-                      <div className="font-bold text-slate-900 dark:text-slate-100">Supplier</div>
+                      <div className="font-bold text-slate-900 dark:text-slate-100">Vendors / Suppliers</div>
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        Equipment vendors, KYC documents &amp; payable balances
+                        Supplier directory &amp; KYC balances ({suppliers.length})
                       </div>
                     </div>
                   </div>
-                  {activeTab === 'suppliers' && (
+                  {(activeTab === 'suppliers' || activeTab === 'vendors') && (
                     <Check className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  )}
+                </button>
+
+                {/* Item 3: Customers / Clients */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('clients');
+                    setOpenMenu(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
+                    activeTab === 'customers' || activeTab === 'clients'
+                      ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400 font-extrabold border border-rose-300/40 dark:border-rose-700/50'
+                      : ''
+                  }`}
+                  role="menuitem"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 shrink-0">
+                      <Users className="w-4 h-4" />
+                    </div>
+                    <div className="text-left">
+                      <div className="font-bold text-slate-900 dark:text-slate-100">Customers / Clients</div>
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                        Client directory, site details &amp; contact records ({customers.length})
+                      </div>
+                    </div>
+                  </div>
+                  {(activeTab === 'customers' || activeTab === 'clients') && (
+                    <Check className="w-4 h-4 text-rose-600 dark:text-rose-400" />
                   )}
                 </button>
               </div>
             )}
           </div>
 
-          {/* Finance Dropdown Menu (Debit & Credit Notes - Enterprise ERP) */}
+          {/* 5. Finance Dropdown Menu (Payments, GST Summary & Notes) */}
           <div
-            ref={financeDropdownRef}
-            onMouseEnter={handleFinanceMouseEnter}
-            onMouseLeave={handleFinanceMouseLeave}
-            className="relative"
+            onMouseEnter={() => handleMenuMouseEnter('finance')}
+            onMouseLeave={handleMenuMouseLeave}
+            className="relative shrink-0"
           >
             <button
               type="button"
-              onClick={() => setIsFinanceDropdownOpen((prev) => !prev)}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none ${
+              onClick={(e) => handleMenuToggleClick(e, 'finance')}
+              className={`shrink-0 flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none whitespace-nowrap ${
                 isFinanceActive
                   ? 'bg-gradient-to-b from-[#0f4e56] to-[#005963] text-white font-extrabold shadow-[0_6px_0_#062a2f,0_10px_15px_rgba(15,78,86,0.35)] border border-teal-500/50 active:translate-y-1 active:shadow-[0_2px_0_#062a2f]'
                   : 'bg-white/80 dark:bg-slate-800/80 text-sky-900 dark:text-sky-200 border border-sky-200/80 dark:border-sky-800/60 hover:text-sky-950 hover:bg-sky-200/70 dark:hover:bg-sky-900/60 font-semibold hover:-translate-y-0.5 hover:shadow-md'
@@ -1754,7 +1715,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
               <span>Finance</span>
               {isFinanceActive && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20 text-white font-mono font-bold tracking-tight">
-                  {financeSubView === 'debit_entry'
+                  {activeTab === 'payments'
+                    ? 'Payments'
+                    : activeTab === 'gst-summary'
+                    ? 'GST Summary'
+                    : financeSubView === 'debit_entry'
                     ? 'DN Entry'
                     : financeSubView === 'debit_dashboard'
                     ? 'DN Reg'
@@ -1773,32 +1738,26 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             {/* Floating Dropdown Card */}
             {isFinanceDropdownOpen && (
               <div
-                className="absolute left-0 top-full mt-2 w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-2.5 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
+                className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-72 max-w-[90vw] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl shadow-slate-900/10 p-2.5 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
                 role="menu"
               >
                 {/* Header Badge */}
                 <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#0f4e56] dark:text-emerald-400 border-b border-slate-100 dark:border-slate-800 mb-1.5 flex items-center justify-between">
-                  <span>Finance Modules</span>
+                  <span>Finance &amp; Accounts</span>
                   <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded font-bold">
-                    {financeNotes.length} Notes
+                    Collections &amp; Notes
                   </span>
                 </div>
 
-                {/* Section 1: DEBIT NOTE SECTION */}
-                <div className="px-2.5 pt-1 pb-1 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  Debit Note
-                </div>
-
-                {/* Item 1: Debit Note Entry */}
+                {/* Section 1: PAYMENTS & GST RECONCILIATION */}
                 <button
                   type="button"
                   onClick={() => {
-                    setFinanceSubView('debit_entry');
-                    setActiveTab('finance');
-                    setIsFinanceDropdownOpen(false);
+                    setActiveTab('payments');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
-                    isFinanceActive && financeSubView === 'debit_entry'
+                    activeTab === 'payments'
                       ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 font-extrabold border border-emerald-300/40 dark:border-emerald-700/50'
                       : ''
                   }`}
@@ -1806,30 +1765,62 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                 >
                   <div className="flex items-center gap-2.5">
                     <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 shrink-0">
-                      <FilePlus2 className="w-4 h-4" />
+                      <CreditCard className="w-4 h-4" />
                     </div>
                     <div className="text-left">
-                      <div className="font-bold text-slate-900 dark:text-slate-100">Debit Note Entry</div>
+                      <div className="font-bold text-slate-900 dark:text-slate-100">Payments &amp; Recovery</div>
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        Create new buyer/supplier debit note
+                        Receipts &amp; client outstanding recovery
                       </div>
                     </div>
                   </div>
-                  {isFinanceActive && financeSubView === 'debit_entry' && (
+                  {activeTab === 'payments' && (
                     <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   )}
                 </button>
 
-                {/* Item 2: Debit Note Dashboard */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('gst-summary');
+                    setOpenMenu(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
+                    activeTab === 'gst-summary'
+                      ? 'bg-teal-500/15 text-teal-700 dark:text-teal-400 font-extrabold border border-teal-300/40 dark:border-teal-700/50'
+                      : ''
+                  }`}
+                  role="menuitem"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-teal-100 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 shrink-0">
+                      <FileSpreadsheet className="w-4 h-4" />
+                    </div>
+                    <div className="text-left">
+                      <div className="font-bold text-slate-900 dark:text-slate-100">GST Summary</div>
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                        GSTR-1 tax export &amp; summary
+                      </div>
+                    </div>
+                  </div>
+                  {activeTab === 'gst-summary' && (
+                    <Check className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                  )}
+                </button>
+
+                {/* Divider Line */}
+                <div className="my-1.5 border-t border-slate-100 dark:border-slate-800" />
+
+                {/* Section 2: DEBIT NOTE & CREDIT NOTE */}
                 <button
                   type="button"
                   onClick={() => {
                     setFinanceSubView('debit_dashboard');
                     setActiveTab('finance');
-                    setIsFinanceDropdownOpen(false);
+                    setOpenMenu(null);
                   }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-0.5 ${
-                    isFinanceActive && financeSubView === 'debit_dashboard'
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
+                    activeTab === 'finance' && financeSubView === 'debit_dashboard'
                       ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 font-extrabold border border-emerald-300/40 dark:border-emerald-700/50'
                       : ''
                   }`}
@@ -1842,33 +1833,24 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                     <div className="text-left">
                       <div className="font-bold text-slate-900 dark:text-slate-100">Debit Note Dashboard</div>
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        Search, edit &amp; view debit notes register
+                        Vendor debit notes register ({financeNotes.filter(n => n.type === 'Debit Note').length})
                       </div>
                     </div>
                   </div>
-                  {isFinanceActive && financeSubView === 'debit_dashboard' && (
+                  {activeTab === 'finance' && financeSubView === 'debit_dashboard' && (
                     <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   )}
                 </button>
 
-                {/* Divider Line */}
-                <div className="my-1.5 border-t border-slate-100 dark:border-slate-800" />
-
-                {/* Section 2: CREDIT NOTE SECTION */}
-                <div className="px-2.5 pt-0.5 pb-1 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  Credit Note
-                </div>
-
-                {/* Item 3: Credit Note Entry */}
                 <button
                   type="button"
                   onClick={() => {
-                    setFinanceSubView('credit_entry');
+                    setFinanceSubView('credit_dashboard');
                     setActiveTab('finance');
-                    setIsFinanceDropdownOpen(false);
+                    setOpenMenu(null);
                   }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
-                    isFinanceActive && financeSubView === 'credit_entry'
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
+                    activeTab === 'finance' && financeSubView === 'credit_dashboard'
                       ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 font-extrabold border border-amber-300/40 dark:border-amber-700/50'
                       : ''
                   }`}
@@ -1879,44 +1861,13 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                       <FilePlus2 className="w-4 h-4" />
                     </div>
                     <div className="text-left">
-                      <div className="font-bold text-slate-900 dark:text-slate-100">Credit Note Entry</div>
-                      <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        Issue buyer/supplier credit note
-                      </div>
-                    </div>
-                  </div>
-                  {isFinanceActive && financeSubView === 'credit_entry' && (
-                    <Check className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                  )}
-                </button>
-
-                {/* Item 4: Credit Note Dashboard */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFinanceSubView('credit_dashboard');
-                    setActiveTab('finance');
-                    setIsFinanceDropdownOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-0.5 ${
-                    isFinanceActive && financeSubView === 'credit_dashboard'
-                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 font-extrabold border border-amber-300/40 dark:border-amber-700/50'
-                      : ''
-                  }`}
-                  role="menuitem"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-1.5 rounded-lg bg-orange-100 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 shrink-0">
-                      <LayoutList className="w-4 h-4" />
-                    </div>
-                    <div className="text-left">
                       <div className="font-bold text-slate-900 dark:text-slate-100">Credit Note Dashboard</div>
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        Search, edit &amp; view credit notes register
+                        Client credit notes register ({financeNotes.filter(n => n.type === 'Credit Note').length})
                       </div>
                     </div>
                   </div>
-                  {isFinanceActive && financeSubView === 'credit_dashboard' && (
+                  {activeTab === 'finance' && financeSubView === 'credit_dashboard' && (
                     <Check className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                   )}
                 </button>
@@ -1924,17 +1875,16 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             )}
           </div>
 
-          {/* Report Dropdown Menu (Purchase & Invoice Reports) */}
+          {/* 6. Report Dropdown Menu (Purchase, Invoice & Non PO GRN Reports) */}
           <div
-            ref={reportDropdownRef}
-            onMouseEnter={handleReportMouseEnter}
-            onMouseLeave={handleReportMouseLeave}
-            className="relative"
+            onMouseEnter={() => handleMenuMouseEnter('report')}
+            onMouseLeave={handleMenuMouseLeave}
+            className="relative shrink-0"
           >
             <button
               type="button"
-              onClick={() => setIsReportDropdownOpen((prev) => !prev)}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none ${
+              onClick={(e) => handleMenuToggleClick(e, 'report')}
+              className={`shrink-0 flex items-center space-x-2 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer select-none whitespace-nowrap ${
                 isReportActive
                   ? 'bg-gradient-to-b from-[#0f4e56] to-[#005963] text-white font-extrabold shadow-[0_6px_0_#062a2f,0_10px_15px_rgba(15,78,86,0.35)] border border-teal-500/50 active:translate-y-1 active:shadow-[0_2px_0_#062a2f]'
                   : 'bg-white/80 dark:bg-slate-800/80 text-sky-900 dark:text-sky-200 border border-sky-200/80 dark:border-sky-800/60 hover:text-sky-950 hover:bg-sky-200/70 dark:hover:bg-sky-900/60 font-semibold hover:-translate-y-0.5 hover:shadow-md'
@@ -1946,7 +1896,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
               <span>Report</span>
               {isReportActive && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20 text-white font-mono font-bold tracking-tight">
-                  {reportSubView === 'purchase' ? 'Purchase' : reportSubView === 'invoice' ? 'Invoice' : 'Non PO GRN'}
+                  {activeTab === 'purchase-report' || reportSubView === 'purchase'
+                    ? 'Purchase'
+                    : activeTab === 'invoice-report' || reportSubView === 'invoice'
+                    ? 'Invoice'
+                    : 'Non PO GRN'}
                 </span>
               )}
               <ChevronDown
@@ -1959,7 +1913,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             {/* Floating Dropdown Card */}
             {isReportDropdownOpen && (
               <div
-                className="absolute left-0 top-full mt-2 w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-2.5 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
+                className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-72 max-w-[90vw] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl shadow-slate-900/10 p-2.5 z-50 text-slate-800 dark:text-slate-200 backdrop-blur-md animate-in fade-in duration-150"
                 role="menu"
               >
                 {/* Header Badge */}
@@ -1975,11 +1929,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   type="button"
                   onClick={() => {
                     setReportSubView('purchase');
-                    setActiveTab('reports');
-                    setIsReportDropdownOpen(false);
+                    setActiveTab('purchase-report');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
-                    isReportActive && reportSubView === 'purchase'
+                    activeTab === 'purchase-report' || (isReportActive && reportSubView === 'purchase')
                       ? 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400 font-extrabold border border-cyan-300/40 dark:border-cyan-700/50'
                       : ''
                   }`}
@@ -1996,7 +1950,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                       </div>
                     </div>
                   </div>
-                  {isReportActive && reportSubView === 'purchase' && (
+                  {(activeTab === 'purchase-report' || (isReportActive && reportSubView === 'purchase')) && (
                     <Check className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
                   )}
                 </button>
@@ -2006,11 +1960,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   type="button"
                   onClick={() => {
                     setReportSubView('invoice');
-                    setActiveTab('reports');
-                    setIsReportDropdownOpen(false);
+                    setActiveTab('invoice-report');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
-                    isReportActive && reportSubView === 'invoice'
+                    activeTab === 'invoice-report' || (isReportActive && reportSubView === 'invoice')
                       ? 'bg-teal-500/15 text-teal-700 dark:text-teal-400 font-extrabold border border-teal-300/40 dark:border-teal-700/50'
                       : ''
                   }`}
@@ -2027,7 +1981,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                       </div>
                     </div>
                   </div>
-                  {isReportActive && reportSubView === 'invoice' && (
+                  {(activeTab === 'invoice-report' || (isReportActive && reportSubView === 'invoice')) && (
                     <Check className="w-4 h-4 text-teal-600 dark:text-teal-400" />
                   )}
                 </button>
@@ -2037,11 +1991,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   type="button"
                   onClick={() => {
                     setReportSubView('non_po_grn');
-                    setActiveTab('reports');
-                    setIsReportDropdownOpen(false);
+                    setActiveTab('non-po-grn-report');
+                    setOpenMenu(null);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer mt-1 ${
-                    isReportActive && reportSubView === 'non_po_grn'
+                    activeTab === 'non-po-grn-report' || (isReportActive && reportSubView === 'non_po_grn')
                       ? 'bg-teal-500/15 text-teal-700 dark:text-teal-400 font-extrabold border border-teal-300/40 dark:border-teal-700/50'
                       : ''
                   }`}
@@ -2058,7 +2012,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                       </div>
                     </div>
                   </div>
-                  {isReportActive && reportSubView === 'non_po_grn' && (
+                  {(activeTab === 'non-po-grn-report' || (isReportActive && reportSubView === 'non_po_grn')) && (
                     <Check className="w-4 h-4 text-teal-600 dark:text-teal-400" />
                   )}
                 </button>
@@ -2066,12 +2020,14 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             )}
           </div>
 
-
-
-          {/* 6. Profit Analysis Tab - Emerald Green */}
+          {/* 7. Profit Analysis Tab - Emerald Green */}
           <button
-            onClick={() => setActiveTab('profit')}
-            className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer ${
+            type="button"
+            onClick={() => {
+              setActiveTab('profit');
+              setOpenMenu(null);
+            }}
+            className={`shrink-0 flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs transition-all duration-200 ease-out cursor-pointer whitespace-nowrap ${
               activeTab === 'profit'
                 ? 'bg-gradient-to-b from-emerald-500 to-emerald-600 text-white font-extrabold shadow-[0_6px_0_#047857,0_10px_15px_rgba(16,185,129,0.35)] border border-emerald-400/80 active:translate-y-1 active:shadow-[0_2px_0_#047857]'
                 : 'bg-white/80 dark:bg-slate-800/80 text-sky-900 dark:text-sky-200 border border-sky-200/80 dark:border-sky-800/60 hover:text-sky-950 hover:bg-sky-200/70 dark:hover:bg-sky-900/60 font-semibold hover:-translate-y-0.5 hover:shadow-md'
@@ -2111,10 +2067,10 @@ export const DemoApp: React.FC<DemoAppProps> = ({
       )}
 
       {/* Tab 1 & 2: Documents List (Quotations / Invoices) */}
-      {(activeTab === 'quotations' || activeTab === 'invoices') && (
+      {(isQuotationsActive || isInvoicesActive) && (
         <div className="space-y-4">
           {/* GST Sales Report Toolbar for Invoices Directory */}
-          {activeTab === 'invoices' && (
+          {isInvoicesActive && (
             <div className="p-4 bg-emerald-900/5 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-2xl flex flex-col xl:flex-row xl:items-center justify-between gap-3 shadow-xs">
               <div className="flex items-center space-x-3">
                 <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-sm shrink-0">
@@ -2187,7 +2143,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
           )}
 
           {/* Financial Overview Banner for Invoices Directory */}
-          {activeTab === 'invoices' && (
+          {isInvoicesActive && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
                 <span className="text-xs font-bold text-slate-500 dark:text-slate-400 block uppercase font-mono">
@@ -2240,7 +2196,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
               {/* Left: Directory Title */}
               <div className="shrink-0">
                 <h3 className="font-bold text-sm sm:text-base text-slate-900 flex items-center gap-2">
-                  <span>{activeTab === 'quotations' ? 'Solar Quotations Directory' : 'Tax Invoices Directory'}</span>
+                  <span>{isQuotationsActive ? 'Solar Quotations Directory' : 'Tax Invoices Directory'}</span>
                 </h3>
               </div>
 
@@ -2250,25 +2206,25 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     type="text"
-                    value={activeTab === 'quotations' ? quoteSearchQuery : invoiceSearchQuery}
+                    value={isQuotationsActive ? quoteSearchQuery : invoiceSearchQuery}
                     onChange={(e) => {
-                      if (activeTab === 'quotations') {
+                      if (isQuotationsActive) {
                         setQuoteSearchQuery(e.target.value);
                       } else {
                         setInvoiceSearchQuery(e.target.value);
                       }
                     }}
                     placeholder={
-                      activeTab === 'quotations'
+                      isQuotationsActive
                         ? 'Search quote by doc #, client, phone, kW...'
                         : 'Search invoice by doc #, client, phone, kW...'
                     }
                     className="w-full pl-9 pr-8 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400/50 transition-all shadow-xs"
                   />
-                  {(activeTab === 'quotations' ? quoteSearchQuery : invoiceSearchQuery) && (
+                  {(isQuotationsActive ? quoteSearchQuery : invoiceSearchQuery) && (
                     <button
                       onClick={() => {
-                        if (activeTab === 'quotations') {
+                        if (isQuotationsActive) {
                           setQuoteSearchQuery('');
                         } else {
                           setInvoiceSearchQuery('');
@@ -2284,7 +2240,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
 
               {/* Right: Action Button & User Info */}
               <div className="flex items-center gap-3 shrink-0">
-                {activeTab === 'quotations' && (
+                {isQuotationsActive && (
                   <>
                     <button
                       type="button"
@@ -2311,7 +2267,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                   </>
                 )}
 
-                {activeTab === 'invoices' && (
+                {isInvoicesActive && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2333,7 +2289,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             </div>
 
             {/* Status Filter Bar for Quotations */}
-            {activeTab === 'quotations' && (
+            {isQuotationsActive && (
               <div className="px-4 py-2 bg-slate-100/70 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto">
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Status Filter:</span>
                 {(['All', 'Draft', 'Pending', 'Approved', 'Cancelled', 'Expired'] as const).map((st) => {
@@ -2382,12 +2338,12 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                     <th className="p-3.5">Capacity</th>
                     <th className="p-3.5">Date</th>
                     <th className="p-3.5 text-right">Net Payable</th>
-                    <th className="p-3.5 text-center">{activeTab === 'quotations' ? 'Quotation Status' : 'Payment Status'}</th>
+                    <th className="p-3.5 text-center">{isQuotationsActive ? 'Quotation Status' : 'Payment Status'}</th>
                     <th className="p-3.5 text-right">Actions &amp; Receipts</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(activeTab === 'quotations'
+                  {(isQuotationsActive
                     ? filteredQuotations
                     : invoices
                   ).map((doc) => {
@@ -2711,7 +2667,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
       )}
 
       {/* Tab 4: Customer Directory */}
-      {activeTab === 'customers' && (
+      {(activeTab === 'customers' || activeTab === 'clients') && (
         <div className="space-y-4">
           {/* Header Panel */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -3028,7 +2984,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
       )}
 
       {/* Tab: Suppliers Directory */}
-      {activeTab === 'suppliers' && (
+      {(activeTab === 'suppliers' || activeTab === 'vendors') && (
         <Suspense fallback={<div className="p-12 text-center text-xs text-amber-600 dark:text-amber-400 font-extrabold animate-pulse">Loading Solar Equipment Suppliers...</div>}>
           <SuppliersTab
             suppliers={suppliers}
@@ -3039,16 +2995,17 @@ export const DemoApp: React.FC<DemoAppProps> = ({
         </Suspense>
       )}
 
-      {/* Tab: Inward Delivery Challans & GRN */}
-      {activeTab === 'challans' && (
-        <Suspense fallback={<div className="p-12 text-center text-xs text-amber-600 dark:text-amber-400 font-extrabold animate-pulse">Loading Goods Received Notes (GRN) Register...</div>}>
-          <InwardChallansTab
+      {/* Tab: Inward Delivery Challans & Search GRN */}
+      {(activeTab === 'challans' || activeTab === 'grn' || activeTab === 'search-grn') && (
+        <Suspense fallback={<div className="p-12 text-center text-xs text-teal-600 dark:text-teal-400 font-extrabold animate-pulse">Loading Search GRN / GRN Report...</div>}>
+          <SearchGRN
             challans={challans}
             setChallans={setChallans}
             suppliers={suppliers}
             setSuppliers={setSuppliers}
             inventory={inventory}
             setInventory={setInventory}
+            purchaseOrders={purchaseOrders}
             onAddStockLogInward={handleAddStockLogInward}
             lang={lang}
           />
@@ -3056,7 +3013,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
       )}
 
       {/* Tab: Non PO GRN (General Expense & Direct Inward - Non-Inventory) */}
-      {activeTab === 'non_po_grn' && (
+      {(activeTab === 'non_po_grn' || activeTab === 'non-po-grn') && (
         <Suspense fallback={<div className="p-12 text-center text-xs text-teal-600 dark:text-teal-400 font-extrabold animate-pulse">Loading Non-PO Goods Received Notes Register...</div>}>
           <NonPoGrnTab
             records={nonPoGrnRecords}
@@ -3097,7 +3054,11 @@ export const DemoApp: React.FC<DemoAppProps> = ({
       )}
 
       {/* Tab: Reports Module (Purchase Report, Invoice Report & Non PO GRN Report) */}
-      {(activeTab === 'reports' || (activeTab as any) === 'non-po-grn-report') && (
+      {(activeTab === 'reports' ||
+        activeTab === 'purchase-report' ||
+        activeTab === 'invoice-report' ||
+        activeTab === 'non-po-grn-report' ||
+        (activeTab as any) === 'non_po_grn_report') && (
         <Suspense fallback={<div className="p-12 text-center text-xs text-cyan-500 font-extrabold animate-pulse">Loading Reports &amp; GST Registers...</div>}>
           <ReportsTab
             challans={challans}
@@ -3107,14 +3068,24 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             financeNotes={financeNotes}
             nonPoGrnRecords={nonPoGrnRecords}
             lang={lang}
-            currentSubView={(activeTab as any) === 'non-po-grn-report' ? 'non_po_grn' : reportSubView}
+            currentSubView={
+              activeTab === 'purchase-report'
+                ? 'purchase'
+                : activeTab === 'invoice-report'
+                ? 'invoice'
+                : activeTab === 'non-po-grn-report' || (activeTab as any) === 'non_po_grn_report'
+                ? 'non_po_grn'
+                : reportSubView
+            }
             onSubViewChange={(view) => setReportSubView(view as any)}
           />
         </Suspense>
       )}
 
       {/* Tab: Purchase Orders Module (Create PO & Search PO / Multi-Stage GRN) */}
-      {activeTab === 'purchase_orders' && (
+      {(activeTab === 'purchase_orders' ||
+        activeTab === 'create-po' ||
+        activeTab === 'search-po') && (
         <Suspense fallback={<div className="p-12 text-center text-xs text-cyan-500 font-extrabold animate-pulse">Loading Purchase Orders &amp; Procurement Register...</div>}>
           <PurchaseOrderTab
             purchaseOrders={purchaseOrders}
@@ -3124,7 +3095,13 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             inventory={inventory}
             customers={customers}
             challans={challans}
-            currentSubView={poSubView}
+            currentSubView={
+              activeTab === 'create-po'
+                ? 'create_po'
+                : activeTab === 'search-po'
+                ? 'search_po'
+                : poSubView
+            }
             onSubViewChange={(view) => setPoSubView(view)}
             onAddNewInventoryItem={(newItem) => setInventory((prev) => [newItem, ...prev])}
           />

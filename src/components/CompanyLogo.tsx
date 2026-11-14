@@ -20,25 +20,30 @@ export interface CompanyLogoProps {
  * - Displays an interactive "+ Upload New Logo" action or clean minimalist brand badge.
  * - Allows immediate one-click upload of any PNG, SVG, or JPG logo file from the user's computer.
  */
+const DEFAULT_LOGO = '/assets/aistudio/logo.png';
+
 export const CompanyLogo: React.FC<CompanyLogoProps> = React.memo(({
   className = 'h-14 sm:h-16 w-auto',
   iconOnly = false,
   variant = 'full',
   style,
-  allowUpload = true,
-  showUploadTrigger = true,
+  allowUpload = false,
+  showUploadTrigger = false,
 }) => {
-  const [logoUrl, setLogoUrl] = useState<string | null>(getCustomLogo());
+  const [logoUrl, setLogoUrl] = useState<string | null>(getCustomLogo() || DEFAULT_LOGO);
+  const [imgError, setImgError] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     // Initial fetch
-    setLogoUrl(getCustomLogo());
+    const stored = getCustomLogo();
+    setLogoUrl(stored || DEFAULT_LOGO);
 
     // Live subscribe to any logo changes across the app
     const unsubscribe = subscribeToLogoChange((newLogo) => {
-      setLogoUrl(newLogo);
+      setLogoUrl(newLogo || DEFAULT_LOGO);
+      setImgError(false);
     });
 
     return () => unsubscribe();
@@ -61,14 +66,15 @@ export const CompanyLogo: React.FC<CompanyLogoProps> = React.memo(({
       }
     };
     reader.readAsDataURL(file);
-    // Reset file input value
     e.target.value = '';
   };
 
   const handleRemoveLogo = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm('Are you sure you want to remove the current logo?')) {
+    if (window.confirm('Reset to default official company logo?')) {
       removeCustomLogo();
+      setLogoUrl(DEFAULT_LOGO);
+      setImgError(false);
     }
   };
 
@@ -81,8 +87,7 @@ export const CompanyLogo: React.FC<CompanyLogoProps> = React.memo(({
 
   // 1. Watermark Mode
   if (isWatermark) {
-    if (!logoUrl) {
-      // Clean subtle text watermark when no custom logo is uploaded
+    if (!logoUrl || imgError) {
       return (
         <div 
           className="flex flex-col items-center justify-center select-none pointer-events-none opacity-5 font-black text-slate-900 dark:text-white"
@@ -104,62 +109,7 @@ export const CompanyLogo: React.FC<CompanyLogoProps> = React.memo(({
     );
   }
 
-  // 2. Custom Logo Already Uploaded
-  if (logoUrl) {
-    return (
-      <div 
-        className="relative inline-flex items-center group shrink-0"
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-      >
-        <img
-          src={logoUrl}
-          alt="Sun Light Electric"
-          className={`object-contain rounded-xl ${className}`}
-          style={style}
-          crossOrigin="anonymous"
-        />
-
-        {/* Hidden File Input for re-uploading */}
-        {allowUpload && (
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept="image/*"
-            className="hidden"
-          />
-        )}
-
-        {/* Change / Remove Tooltip Actions (Visible on hover in interactive UI, hidden in print) */}
-        {allowUpload && isHovered && (
-          <div className="no-print absolute -bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-slate-900/90 text-white text-[10px] font-bold px-2 py-1 rounded-lg shadow-xl backdrop-blur-xs z-30 whitespace-nowrap border border-slate-700">
-            <button
-              type="button"
-              onClick={triggerUpload}
-              className="hover:text-amber-400 transition-colors cursor-pointer flex items-center gap-1"
-              title="Upload a different logo"
-            >
-              <Upload className="w-3 h-3" />
-              <span>Change</span>
-            </button>
-            <span className="text-slate-500">|</span>
-            <button
-              type="button"
-              onClick={handleRemoveLogo}
-              className="hover:text-rose-400 transition-colors cursor-pointer flex items-center gap-1"
-              title="Remove logo"
-            >
-              <X className="w-3 h-3" />
-              <span>Remove</span>
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // 3. Icon Only Mode (when no custom logo uploaded)
+  // 2. Icon Only Mode
   if (iconOnly || variant === 'icon') {
     return (
       <div 
@@ -172,42 +122,69 @@ export const CompanyLogo: React.FC<CompanyLogoProps> = React.memo(({
     );
   }
 
-  // 4. Default Mode when NO logo is uploaded yet:
-  // Interactive "+ Add New Logo" upload button or clean brand badge
-  return (
-    <div className="inline-flex items-center shrink-0">
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept="image/png, image/jpeg, image/svg+xml, image/webp"
-        className="hidden"
-      />
+  // 3. Official Logo Display (Custom or Default /assets/aistudio/logo.png)
+  const activeLogo = logoUrl || DEFAULT_LOGO;
 
-      {allowUpload && showUploadTrigger ? (
-        <button
-          type="button"
-          onClick={triggerUpload}
-          className="no-print flex items-center space-x-2 border-2 border-dashed border-amber-500/60 hover:border-amber-400 bg-amber-500/10 hover:bg-amber-500/20 active:scale-95 text-amber-600 dark:text-amber-400 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-sm cursor-pointer group"
-          title="Click to upload your new official Sun Light Electric logo (PNG, JPG, SVG)"
-        >
-          <div className="p-1 bg-amber-500/20 rounded-lg group-hover:bg-amber-500/30 text-amber-500">
-            <Upload className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
-          </div>
-          <div className="text-left">
-            <span className="block leading-tight text-[11px] uppercase tracking-wider text-amber-700 dark:text-amber-300">
-              + Add New Logo
-            </span>
-            <span className="block text-[9px] font-normal text-slate-500 dark:text-slate-400">
-              Click to select image file
-            </span>
-          </div>
-        </button>
+  return (
+    <div 
+      className="relative inline-flex items-center group shrink-0"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {!imgError ? (
+        <img
+          src={activeLogo}
+          alt="Sun Light Electric"
+          className={`object-contain rounded-xl shadow-xs ${className}`}
+          style={style}
+          crossOrigin="anonymous"
+          onError={() => setImgError(true)}
+        />
       ) : (
-        /* Minimalist fallback for print or non-interactive containers */
-        <div className="flex items-center space-x-2 px-3 py-1.5 bg-slate-900 text-amber-400 rounded-xl border border-slate-700 font-black text-xs uppercase tracking-wide">
-          <ImageIcon className="w-4 h-4 text-amber-400" />
-          <span>Sun Light Electric</span>
+        /* Graceful high-fidelity SVG fallback if image cannot be read */
+        <div className={`flex items-center space-x-2 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-black rounded-xl shadow-xs ${className}`}>
+          <div className="w-5 h-5 rounded-full bg-slate-950 text-amber-400 flex items-center justify-center text-xs">⚡</div>
+          <span className="text-xs tracking-tight font-extrabold uppercase whitespace-nowrap">Sun Light Electric</span>
+        </div>
+      )}
+
+      {/* Hidden File Input for optional upload */}
+      {allowUpload && (
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          accept="image/*"
+          className="hidden"
+        />
+      )}
+
+      {/* Change / Remove Tooltip Actions (Visible ONLY when allowUpload=true and hovered) */}
+      {allowUpload && showUploadTrigger && isHovered && (
+        <div className="no-print absolute -bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-slate-900/95 text-white text-[10px] font-bold px-2 py-1 rounded-lg shadow-xl backdrop-blur-xs z-30 whitespace-nowrap border border-slate-700">
+          <button
+            type="button"
+            onClick={triggerUpload}
+            className="hover:text-amber-400 transition-colors cursor-pointer flex items-center gap-1"
+            title="Upload a different logo"
+          >
+            <Upload className="w-3 h-3" />
+            <span>Change</span>
+          </button>
+          {logoUrl !== DEFAULT_LOGO && (
+            <>
+              <span className="text-slate-500">|</span>
+              <button
+                type="button"
+                onClick={handleRemoveLogo}
+                className="hover:text-rose-400 transition-colors cursor-pointer flex items-center gap-1"
+                title="Reset to default logo"
+              >
+                <X className="w-3 h-3" />
+                <span>Reset</span>
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
