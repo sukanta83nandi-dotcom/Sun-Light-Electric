@@ -17,8 +17,19 @@ import {
   Building,
   Image as ImageIcon,
 } from 'lucide-react';
-import { Customer, ClientDocument, ClientDocumentCategory } from '../types';
+import {
+  Customer,
+  ClientDocument,
+  ClientDocumentCategory,
+  CustomerSupportingDocument,
+} from '../types';
 import { DocumentViewerModal } from './DocumentViewerModal';
+import {
+  registerRawFile,
+  getRawFile,
+  createSafeBlobUrl,
+  revokeSafeBlobUrl,
+} from '../utils/blobHelper';
 
 interface CustomerDetailsModalProps {
   customer: Customer | null;
@@ -27,12 +38,13 @@ interface CustomerDetailsModalProps {
 }
 
 export const KYC_DOCUMENT_CATEGORIES: ClientDocumentCategory[] = [
-  'Electricity Bill (Discom Consumer Copy)',
-  'Aadhaar / Voter ID',
+  'Aadhaar Card',
   'PAN Card',
-  'Roof Ownership / Land Deed',
-  'Site / Roof Photo',
-  'Other Document',
+  'GST Certificate',
+  'Electricity Bill / Property Proof',
+  'Cancelled Cheque',
+  'Signed Solar Proposal / Agreement',
+  'Other Supporting Document',
 ];
 
 export const formatFileSize = (bytesOrStr: number | string): string => {
@@ -50,7 +62,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
   onUpdateCustomer,
 }) => {
   const [selectedCategory, setSelectedCategory] =
-    useState<ClientDocumentCategory>('Electricity Bill (Discom Consumer Copy)');
+    useState<ClientDocumentCategory>('Aadhaar Card');
   const [isDragging, setIsDragging] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [viewingDoc, setViewingDoc] = useState<ClientDocument | null>(null);
@@ -58,12 +70,46 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
 
   if (!customer) return null;
 
-  const documents = customer.documents || [];
+  const documents: ClientDocument[] =
+    customer.supportingDocuments && customer.supportingDocuments.length > 0
+      ? customer.supportingDocuments.map((sd) => ({
+          id: sd.id,
+          category: sd.docType,
+          name: sd.fileName,
+          size: sd.size ?? 'Attached',
+          dataUrl: sd.fileDataUrl,
+          uploadedAt: sd.uploadedAt,
+          mimeType: sd.mimeType,
+        }))
+      : customer.documents || [];
+
+  const toSupportingDocs = (docs: ClientDocument[]): CustomerSupportingDocument[] => {
+    const today = new Date().toISOString().split('T')[0];
+    return docs.map((d) => ({
+      id: d.id,
+      docType: d.category,
+      fileName: d.name,
+      fileDataUrl: d.dataUrl,
+      uploadedAt: d.uploadedAt || today,
+      size: d.size,
+      mimeType: d.mimeType,
+    }));
+  };
 
   const handleFiles = (files: FileList | File[]) => {
     setUploadError(null);
-    const newDocs: ClientDocument[] = [];
     const maxSizeBytes = 10 * 1024 * 1024; // 10MB
+    const validTypes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/png',
+      'image/jpg',
+      'image/webp',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ];
 
     Array.from(files).forEach((file) => {
       if (file.size > maxSizeBytes) {
@@ -71,32 +117,52 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
         return;
       }
 
-      const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
-      if (!validTypes.includes(file.type) && !file.name.match(/\.(pdf|jpe?g|png|webp)$/i)) {
-        setUploadError(`File "${file.name}" is not a supported format (PDF, JPG, PNG).`);
+      if (
+        !validTypes.includes(file.type) &&
+        !file.name.match(/\.(pdf|jpe?g|png|webp|docx?|xlsx?)$/i)
+      ) {
+        setUploadError(
+          `File "${file.name}" is not a supported format (PDF, JPG, PNG, DOC/DOCX, XLSX).`
+        );
         return;
       }
 
       const reader = new FileReader();
       reader.onload = () => {
+        const docId = `DOC-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        registerRawFile(docId, file);
         const doc: ClientDocument = {
-          id: `DOC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          id: docId,
           category: selectedCategory,
           name: file.name,
           size: formatFileSize(file.size),
           dataUrl: reader.result as string,
           uploadedAt: new Date().toISOString().split('T')[0],
-          mimeType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
+          mimeType:
+            file.type ||
+            (file.name.toLowerCase().endsWith('.pdf')
+              ? 'application/pdf'
+              : file.name.toLowerCase().match(/\.docx?$/)
+              ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              : file.name.toLowerCase().match(/\.xlsx?$/)
+              ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+              : 'image/jpeg'),
         };
 
+        const nextDocs = [...documents, doc];
         const updatedCustomer: Customer = {
           ...customer,
-          documents: [...(customer.documents || []), doc],
+          documents: nextDocs,
+          supportingDocuments: toSupportingDocs(nextDocs),
         };
         onUpdateCustomer(updatedCustomer);
       };
       reader.readAsDataURL(file);
     });
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -108,22 +174,29 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
   };
 
   const handleDeleteDocument = (docId: string) => {
-    if (window.confirm('Are you sure you want to delete this attached document?')) {
-      const updatedCustomer: Customer = {
-        ...customer,
-        documents: (customer.documents || []).filter((d) => d.id !== docId),
-      };
-      onUpdateCustomer(updatedCustomer);
-    }
+    const nextDocs = documents.filter((d) => d.id !== docId);
+    const updatedCustomer: Customer = {
+      ...customer,
+      documents: nextDocs,
+      supportingDocuments: toSupportingDocs(nextDocs),
+    };
+    onUpdateCustomer(updatedCustomer);
   };
 
   const handleDownloadDoc = (doc: ClientDocument) => {
+    const blobUrl = createSafeBlobUrl(
+      doc.dataUrl,
+      doc.mimeType,
+      getRawFile(doc.id),
+      doc.name
+    );
     const link = document.createElement('a');
-    link.href = doc.dataUrl;
+    link.href = blobUrl;
     link.download = doc.name;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => revokeSafeBlobUrl(blobUrl, doc.dataUrl), 1000);
   };
 
   const getDocIcon = (doc: ClientDocument) => {
@@ -138,16 +211,22 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
 
   const getCategoryBadgeColor = (category: ClientDocumentCategory) => {
     switch (category) {
+      case 'Electricity Bill / Property Proof':
       case 'Electricity Bill (Discom Consumer Copy)':
         return 'bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800';
+      case 'Aadhaar Card':
       case 'Aadhaar / Voter ID':
         return 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800';
       case 'PAN Card':
         return 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800';
+      case 'GST Certificate':
       case 'Roof Ownership / Land Deed':
         return 'bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800';
+      case 'Cancelled Cheque':
       case 'Site / Roof Photo':
         return 'bg-cyan-100 text-cyan-800 border-cyan-300 dark:bg-cyan-950/60 dark:text-cyan-300 dark:border-cyan-800';
+      case 'Signed Solar Proposal / Agreement':
+        return 'bg-indigo-100 text-indigo-800 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800';
       default:
         return 'bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700';
     }
@@ -292,7 +371,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                     ref={fileInputRef}
                     onChange={(e) => e.target.files && handleFiles(e.target.files)}
                     multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.webp"
+                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls,.webp"
                     className="hidden"
                   />
                   <UploadCloud className="w-7 h-7 mx-auto text-amber-500 mb-1.5" />
@@ -300,7 +379,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                     Click to browse or drag &amp; drop files here
                   </p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Supports PDF, JPG, PNG up to 10MB per document
+                    Supports PDF, JPG, PNG, DOC/DOCX, XLSX up to 10MB per document
                   </p>
                 </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Supplier, SupplierDocument } from '../types/supplier';
 import { Language } from '../types';
 import {
@@ -34,6 +34,12 @@ import {
 } from 'lucide-react';
 import { AddSupplierModal } from './AddSupplierModal';
 import { AuditHistoryModal } from './AuditHistoryModal';
+import { DocumentViewerModal } from './DocumentViewerModal';
+import {
+  getRawFile,
+  createSafeBlobUrl,
+  revokeSafeBlobUrl,
+} from '../utils/blobHelper';
 import {
   exportSuppliersToExcel,
   importSuppliersFromExcel,
@@ -80,17 +86,39 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const getSupplierDocs = (supplier: Supplier): SupplierDocument[] => {
+    if (supplier.documents && supplier.documents.length > 0) {
+      return supplier.documents;
+    }
+    return (supplier.supportingDocuments || []).map((sd, idx) => ({
+      id: sd.id || `SUPDOC-${idx}`,
+      name: sd.fileName,
+      category: sd.docType,
+      size: sd.size || 'Stored',
+      type: sd.type || 'application/octet-stream',
+      uploadedAt: sd.uploadedAt,
+      dataUrl: sd.fileUrl,
+    }));
+  };
+
   const handleDownloadDoc = (doc: SupplierDocument) => {
     if (!doc.dataUrl) {
       alert(`File content for "${doc.name}" is not locally stored.`);
       return;
     }
+    const blobUrl = createSafeBlobUrl(
+      doc.dataUrl,
+      doc.type,
+      getRawFile(doc.id),
+      doc.name
+    );
     const link = document.createElement('a');
-    link.href = doc.dataUrl;
+    link.href = blobUrl;
     link.download = doc.name;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => revokeSafeBlobUrl(blobUrl, doc.dataUrl), 1000);
   };
 
   // Sanitize phone for tel: and wa.me:
@@ -172,9 +200,22 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
         prev.map((s) => (s.id === editingSupplier.id ? updatedWithAudit : s))
       );
     } else {
+      const initialDocs = getSupplierDocs(supplierData);
+      const initialDocChanges =
+        initialDocs.length > 0
+          ? [
+              {
+                field: 'Attached Supporting Documents',
+                oldValue: '0 Files',
+                newValue: initialDocs
+                  .map((d) => `${d.category || 'KYC Document'} (${d.name})`)
+                  .join(', '),
+              },
+            ]
+          : undefined;
       const createdWithAudit: Supplier = {
         ...supplierData,
-        auditHistory: [createAuditEntry('CREATED', DEFAULT_AUDIT_USER)],
+        auditHistory: [createAuditEntry('CREATED', DEFAULT_AUDIT_USER, initialDocChanges)],
       };
       setSuppliers((prev) => [createdWithAudit, ...prev]);
     }
@@ -290,6 +331,27 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
   const suppliersWithDuesCount = suppliers.filter((s) => (s.balancePayable || 0) > 0).length;
   const activeSuppliersCount = suppliers.filter((s) => (s.status || 'active') === 'active').length;
   const inactiveSuppliersCount = suppliers.filter((s) => s.status === 'inactive').length;
+
+  useEffect(() => {
+    if (isAddModalOpen) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [isAddModalOpen]);
+
+  if (isAddModalOpen) {
+    return (
+      <AddSupplierModal
+        isOpen={isAddModalOpen}
+        onClose={() => {
+          setIsAddModalOpen(false);
+          setEditingSupplier(null);
+        }}
+        onSave={handleSaveSupplier}
+        editingSupplier={editingSupplier}
+        existingSuppliersCount={suppliers.length}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -613,31 +675,67 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
                         <div className="text-[11px] text-slate-500 truncate max-w-xs mt-0.5">
                           {supplier.address}
                         </div>
-                        <div className="mt-1">
-                          {supplier.documents && supplier.documents.length > 0 ? (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedKycSupplier(supplier)}
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 px-2 py-0.5 rounded-md hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
-                              title="Click to view attached KYC documents"
-                            >
-                              <Paperclip className="w-2.5 h-2.5" />
-                              <span>{supplier.documents.length} KYC {supplier.documents.length === 1 ? 'Doc' : 'Docs'}</span>
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingSupplier(supplier);
-                                setIsAddModalOpen(true);
-                              }}
-                              className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
-                              title="Upload KYC Documents for this supplier"
-                            >
-                              <Paperclip className="w-2.5 h-2.5 opacity-60" />
-                              <span>+ Attach KYC</span>
-                            </button>
-                          )}
+                        <div className="mt-1.5 flex items-center flex-wrap gap-1">
+                          {(() => {
+                            const supplierDocs = getSupplierDocs(supplier);
+                            if (supplierDocs.length === 0) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingSupplier(supplier);
+                                    setIsAddModalOpen(true);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer"
+                                  title="Upload KYC Documents for this supplier"
+                                >
+                                  <Paperclip className="w-2.5 h-2.5 opacity-60" />
+                                  <span>+ Attach KYC</span>
+                                </button>
+                              );
+                            }
+
+                            const docTypes = Array.from(
+                              new Set(supplierDocs.map((d) => d.category || 'KYC Doc'))
+                            );
+
+                            return (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedKycSupplier(supplier)}
+                                  className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 px-2 py-0.5 rounded-md hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
+                                  title="Click to view & download all attached KYC documents"
+                                >
+                                  <Paperclip className="w-2.5 h-2.5" />
+                                  <span>
+                                    {supplierDocs.length} KYC {supplierDocs.length === 1 ? 'Doc' : 'Docs'}
+                                  </span>
+                                </button>
+                                {docTypes.slice(0, 2).map((dt) => (
+                                  <button
+                                    key={dt}
+                                    type="button"
+                                    onClick={() => setSelectedKycSupplier(supplier)}
+                                    className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 transition-colors cursor-pointer"
+                                    title={`View ${dt}`}
+                                  >
+                                    {dt}
+                                  </button>
+                                ))}
+                                {docTypes.length > 2 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedKycSupplier(supplier)}
+                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 cursor-pointer"
+                                    title={docTypes.slice(2).join(', ')}
+                                  >
+                                    +{docTypes.length - 2} more
+                                  </button>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </td>
 
@@ -789,7 +887,7 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
                             type="button"
                             onClick={() => setSelectedKycSupplier(supplier)}
                             className="min-w-[32px] min-h-[32px] flex items-center justify-center p-1.5 text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                            title={supplier.documents?.length ? `View ${supplier.documents.length} KYC Documents` : "Attach KYC Documents"}
+                            title={getSupplierDocs(supplier).length ? `View ${getSupplierDocs(supplier).length} KYC Documents` : "Attach KYC Documents"}
                           >
                             <Paperclip className="w-4 h-4" />
                           </button>
@@ -825,18 +923,6 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
           </table>
         </div>
       </div>
-
-      {/* Add / Edit Supplier Modal */}
-      <AddSupplierModal
-        isOpen={isAddModalOpen}
-        onClose={() => {
-          setIsAddModalOpen(false);
-          setEditingSupplier(null);
-        }}
-        onSave={handleSaveSupplier}
-        editingSupplier={editingSupplier}
-        existingSuppliersCount={suppliers.length}
-      />
 
       {/* Settle Due Mini Modal */}
       {settlingSupplier && (
@@ -956,120 +1042,127 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
               </div>
 
               {/* Documents */}
-              {(!selectedKycSupplier.documents || selectedKycSupplier.documents.length === 0) ? (
-                <div className="text-center py-8 space-y-3 bg-amber-50/50 dark:bg-slate-800/30 rounded-2xl border border-dashed border-amber-300 dark:border-slate-700">
-                  <FileText className="w-10 h-10 text-amber-500/60 mx-auto" />
-                  <div>
-                    <h5 className="font-bold text-slate-800 dark:text-slate-200 text-sm">
-                      No KYC documents attached
-                    </h5>
-                    <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-                      Upload GST Certificate, MSME/Udyam registration, or cancelled cheque for vendor reconciliation.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const sup = selectedKycSupplier;
-                      setSelectedKycSupplier(null);
-                      setEditingSupplier(sup);
-                      setIsAddModalOpen(true);
-                    }}
-                    className="px-4 py-2 bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-xs hover:shadow-md transition-all cursor-pointer"
-                  >
-                    + Upload Documents Now
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
-                    <span>Attached Documents ({selectedKycSupplier.documents.length}):</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const sup = selectedKycSupplier;
-                        setSelectedKycSupplier(null);
-                        setEditingSupplier(sup);
-                        setIsAddModalOpen(true);
-                      }}
-                      className="text-[11px] text-amber-600 dark:text-amber-400 font-bold hover:underline flex items-center gap-1 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Manage / Add More</span>
-                    </button>
-                  </div>
+              {(() => {
+                const kycDocs = getSupplierDocs(selectedKycSupplier);
+                if (kycDocs.length === 0) {
+                  return (
+                    <div className="text-center py-8 space-y-3 bg-amber-50/50 dark:bg-slate-800/30 rounded-2xl border border-dashed border-amber-300 dark:border-slate-700">
+                      <FileText className="w-10 h-10 text-amber-500/60 mx-auto" />
+                      <div>
+                        <h5 className="font-bold text-slate-800 dark:text-slate-200 text-sm">
+                          No KYC documents attached
+                        </h5>
+                        <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                          Upload GST Certificate, MSME/Udyam registration, or cancelled cheque for vendor reconciliation.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const sup = selectedKycSupplier;
+                          setSelectedKycSupplier(null);
+                          setEditingSupplier(sup);
+                          setIsAddModalOpen(true);
+                        }}
+                        className="px-4 py-2 bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-xs hover:shadow-md transition-all cursor-pointer"
+                      >
+                        + Upload Documents Now
+                      </button>
+                    </div>
+                  );
+                }
 
-                  <div className="space-y-2">
-                    {selectedKycSupplier.documents.map((doc) => {
-                      const isPdf = doc.type?.includes('pdf') || doc.name.toLowerCase().endsWith('.pdf');
-                      const isImage = doc.type?.includes('image') || /\.(jpg|jpeg|png|webp|svg)$/i.test(doc.name);
+                return (
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
+                      <span>Attached Documents ({kycDocs.length}):</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const sup = selectedKycSupplier;
+                          setSelectedKycSupplier(null);
+                          setEditingSupplier(sup);
+                          setIsAddModalOpen(true);
+                        }}
+                        className="text-[11px] text-amber-600 dark:text-amber-400 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Manage / Add More</span>
+                      </button>
+                    </div>
 
-                      return (
-                        <div
-                          key={doc.id}
-                          className="flex items-center justify-between p-3 bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl hover:border-slate-300 dark:hover:border-slate-600 transition-colors shadow-2xs"
-                        >
-                          <div className="flex items-center space-x-3 min-w-0 flex-1 mr-3">
-                            <div
-                              className={`p-2 rounded-lg shrink-0 ${
-                                isPdf
-                                  ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
-                                  : isImage
-                                  ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
-                                  : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                              }`}
-                            >
-                              {isPdf ? (
-                                <FileText className="w-4 h-4" />
-                              ) : isImage ? (
-                                <ImageIcon className="w-4 h-4" />
-                              ) : (
-                                <File className="w-4 h-4" />
+                    <div className="space-y-2">
+                      {kycDocs.map((doc) => {
+                        const isPdf = doc.type?.includes('pdf') || doc.name.toLowerCase().endsWith('.pdf');
+                        const isImage = doc.type?.includes('image') || /\.(jpg|jpeg|png|webp|svg)$/i.test(doc.name);
+
+                        return (
+                          <div
+                            key={doc.id}
+                            className="flex items-center justify-between p-3 bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl hover:border-slate-300 dark:hover:border-slate-600 transition-colors shadow-2xs"
+                          >
+                            <div className="flex items-center space-x-3 min-w-0 flex-1 mr-3">
+                              <div
+                                className={`p-2 rounded-lg shrink-0 ${
+                                  isPdf
+                                    ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                                    : isImage
+                                    ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                                    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                                }`}
+                              >
+                                {isPdf ? (
+                                  <FileText className="w-4 h-4" />
+                                ) : isImage ? (
+                                  <ImageIcon className="w-4 h-4" />
+                                ) : (
+                                  <File className="w-4 h-4" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono">
+                                    {doc.category || 'KYC Doc'}
+                                  </span>
+                                  <span className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-sm" title={doc.name}>
+                                    {doc.name}
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                  {doc.size} {doc.uploadedAt && `• Added ${doc.uploadedAt}`}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center space-x-1 shrink-0">
+                              {doc.dataUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewKycDoc(doc)}
+                                  className="flex items-center space-x-1 px-2.5 py-1.5 bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>Preview</span>
+                                </button>
+                              )}
+                              {doc.dataUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadDoc(doc)}
+                                  className="flex items-center space-x-1 px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  <span>Download</span>
+                                </button>
                               )}
                             </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono">
-                                  {doc.category || 'KYC Doc'}
-                                </span>
-                                <span className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-sm" title={doc.name}>
-                                  {doc.name}
-                                </span>
-                              </div>
-                              <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                                {doc.size} {doc.uploadedAt && `• Added ${doc.uploadedAt}`}
-                              </div>
-                            </div>
                           </div>
-
-                          <div className="flex items-center space-x-1 shrink-0">
-                            {doc.dataUrl && (
-                              <button
-                                type="button"
-                                onClick={() => setPreviewKycDoc(doc)}
-                                className="flex items-center space-x-1 px-2.5 py-1.5 bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>Preview</span>
-                              </button>
-                            )}
-                            {doc.dataUrl && (
-                              <button
-                                type="button"
-                                onClick={() => handleDownloadDoc(doc)}
-                                className="flex items-center space-x-1 px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                              >
-                                <Download className="w-3.5 h-3.5" />
-                                <span>Download</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Footer */}
@@ -1086,74 +1179,12 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
         </div>
       )}
 
-      {/* Full Preview Lightbox in SuppliersTab */}
+      {/* Safe Blob URL Preview Lightbox in SuppliersTab */}
       {previewKycDoc && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 z-60 animate-in fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
-              <div className="flex items-center space-x-2.5 min-w-0">
-                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl">
-                  <Paperclip className="w-4 h-4" />
-                </div>
-                <div className="min-w-0">
-                  <h4 className="font-bold text-sm text-white truncate max-w-md">
-                    {previewKycDoc.name}
-                  </h4>
-                  <p className="text-[10px] text-slate-400 font-mono">
-                    {previewKycDoc.category} • {previewKycDoc.size}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  type="button"
-                  onClick={() => handleDownloadDoc(previewKycDoc)}
-                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewKycDoc(null)}
-                  className="p-1.5 hover:bg-white/10 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="p-4 flex-1 overflow-auto flex items-center justify-center bg-slate-100 dark:bg-slate-950 min-h-[300px]">
-              {previewKycDoc.type?.includes('image') || /\.(jpg|jpeg|png|webp|svg)$/i.test(previewKycDoc.name) ? (
-                <img
-                  src={previewKycDoc.dataUrl}
-                  alt={previewKycDoc.name}
-                  className="max-h-[70vh] max-w-full object-contain rounded-xl shadow-lg"
-                />
-              ) : previewKycDoc.type?.includes('pdf') || previewKycDoc.name.toLowerCase().endsWith('.pdf') ? (
-                <iframe
-                  src={previewKycDoc.dataUrl}
-                  title={previewKycDoc.name}
-                  className="w-full h-[65vh] rounded-xl border border-slate-300 dark:border-slate-800 bg-white"
-                />
-              ) : (
-                <div className="text-center p-6 space-y-3">
-                  <FileText className="w-12 h-12 text-slate-400 mx-auto" />
-                  <p className="text-xs text-slate-600 dark:text-slate-300 font-semibold">
-                    Direct preview is not supported for this file type.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => handleDownloadDoc(previewKycDoc)}
-                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl"
-                  >
-                    Download to view file
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <DocumentViewerModal
+          document={previewKycDoc}
+          onClose={() => setPreviewKycDoc(null)}
+        />
       )}
 
       {/* Supplier Audit & Revision History Modal (Conditionally Mounted) */}

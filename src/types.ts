@@ -17,9 +17,15 @@ export type AppThemeMode = 'auto' | 'light' | 'dark';
 export type AppMode = 'blueprint' | 'app_demo';
 
 export type ClientDocumentCategory =
+  | 'Aadhaar Card'
+  | 'PAN Card'
+  | 'GST Certificate'
+  | 'Electricity Bill / Property Proof'
+  | 'Cancelled Cheque'
+  | 'Signed Solar Proposal / Agreement'
+  | 'Other Supporting Document'
   | 'Electricity Bill (Discom Consumer Copy)'
   | 'Aadhaar / Voter ID'
-  | 'PAN Card'
   | 'Roof Ownership / Land Deed'
   | 'Site / Roof Photo'
   | 'Other Document';
@@ -31,6 +37,16 @@ export interface ClientDocument {
   size: number | string;
   dataUrl: string;
   uploadedAt?: string;
+  mimeType?: string;
+}
+
+export interface CustomerSupportingDocument {
+  id: string;
+  docType: ClientDocumentCategory;
+  fileName: string;
+  fileDataUrl: string;
+  uploadedAt: string;
+  size?: number | string;
   mimeType?: string;
 }
 
@@ -67,10 +83,13 @@ export interface Customer {
   stateCode: string;
   pinCode: string;
   pincode?: string;
+  siteCoordinates?: string;
   locationType?: 'Within State' | 'Out of State';
   currency?: string;
   category: 'Domestic' | 'Commercial';
   creditPeriodDays?: string;
+  creditLimit?: number;
+  openingBalance?: number;
   termsOfPayment?: string;
   dispatchThrough?: string;
   termsOfDelivery?: string;
@@ -80,6 +99,7 @@ export interface Customer {
   panNumber?: string;
   status: 'active' | 'inactive';
   documents?: ClientDocument[];
+  supportingDocuments?: CustomerSupportingDocument[];
   auditHistory?: AuditLogEntry[];
 }
 

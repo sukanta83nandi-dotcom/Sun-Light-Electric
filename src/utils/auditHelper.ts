@@ -99,9 +99,20 @@ export const diffCustomerFields = (oldCust: Customer, newCust: Customer): FieldC
   compare('State', oldCust.state, newCust.state);
   compare('State Code', oldCust.stateCode, newCust.stateCode);
   compare('PIN Code', oldCust.pinCode || oldCust.pincode, newCust.pinCode || newCust.pincode);
+  compare('Installation Site Coordinates / Landmark', oldCust.siteCoordinates, newCust.siteCoordinates);
   compare('Location', oldCust.locationType, newCust.locationType);
   compare('Currency', oldCust.currency || 'Rs.', newCust.currency || 'Rs.');
   compare('Credit Period (Days)', oldCust.creditPeriodDays ?? '0', newCust.creditPeriodDays ?? '0');
+  compare(
+    'Credit Limit',
+    oldCust.creditLimit !== undefined ? `₹${Number(oldCust.creditLimit).toLocaleString('en-IN')}` : '',
+    newCust.creditLimit !== undefined ? `₹${Number(newCust.creditLimit).toLocaleString('en-IN')}` : ''
+  );
+  compare(
+    'Opening Balance',
+    oldCust.openingBalance !== undefined ? `₹${Number(oldCust.openingBalance).toLocaleString('en-IN')}` : '',
+    newCust.openingBalance !== undefined ? `₹${Number(newCust.openingBalance).toLocaleString('en-IN')}` : ''
+  );
   compare('Terms of Payment', oldCust.termsOfPayment || 'Advance', newCust.termsOfPayment || 'Advance');
   compare(
     'Dispatch Through',
@@ -122,13 +133,59 @@ export const diffCustomerFields = (oldCust: Customer, newCust: Customer): FieldC
   compare('GSTIN', oldCust.gstin, newCust.gstin);
   compare('PAN Number', oldCust.panNumber, newCust.panNumber);
 
-  const oldDocsCount = (oldCust.documents || []).length;
-  const newDocsCount = (newCust.documents || []).length;
-  if (oldDocsCount !== newDocsCount) {
+  const getCustomerDocItems = (cust: Customer): Array<{ key: string; label: string }> => {
+    if (cust.supportingDocuments && cust.supportingDocuments.length > 0) {
+      return cust.supportingDocuments.map((d) => ({
+        key: `${d.docType}::${d.fileName}`,
+        label: `${d.docType} (${d.fileName})`,
+      }));
+    }
+    return (cust.documents || []).map((d) => ({
+      key: `${d.category}::${d.name}`,
+      label: `${d.category} (${d.name})`,
+    }));
+  };
+
+  const oldDocs = getCustomerDocItems(oldCust);
+  const newDocs = getCustomerDocItems(newCust);
+
+  const oldCounts = new Map<string, number>();
+  oldDocs.forEach((d) => oldCounts.set(d.key, (oldCounts.get(d.key) || 0) + 1));
+  const newCounts = new Map<string, number>();
+  newDocs.forEach((d) => newCounts.set(d.key, (newCounts.get(d.key) || 0) + 1));
+
+  const addedLabels: string[] = [];
+  newDocs.forEach((d) => {
+    const prev = oldCounts.get(d.key) || 0;
+    if (prev > 0) {
+      oldCounts.set(d.key, prev - 1);
+    } else {
+      addedLabels.push(d.label);
+    }
+  });
+
+  const removedLabels: string[] = [];
+  oldDocs.forEach((d) => {
+    const next = newCounts.get(d.key) || 0;
+    if (next > 0) {
+      newCounts.set(d.key, next - 1);
+    } else {
+      removedLabels.push(d.label);
+    }
+  });
+
+  if (addedLabels.length > 0) {
     changes.push({
-      field: 'KYC Documents',
-      oldValue: `${oldDocsCount} File${oldDocsCount === 1 ? '' : 's'}`,
-      newValue: `${newDocsCount} File${newDocsCount === 1 ? '' : 's'}`,
+      field: 'Attached Supporting Documents',
+      oldValue: `${oldDocs.length} File${oldDocs.length === 1 ? '' : 's'}`,
+      newValue: addedLabels.join(', '),
+    });
+  }
+  if (removedLabels.length > 0) {
+    changes.push({
+      field: 'Removed Supporting Documents',
+      oldValue: removedLabels.join(', '),
+      newValue: `${newDocs.length} File${newDocs.length === 1 ? '' : 's'} remaining`,
     });
   }
 
@@ -186,13 +243,64 @@ export const diffSupplierFields = (oldSup: Supplier, newSup: Supplier): FieldCha
     });
   }
 
-  const oldDocsCount = (oldSup.documents || []).length;
-  const newDocsCount = (newSup.documents || []).length;
-  if (oldDocsCount !== newDocsCount) {
+  const getSupplierDocItems = (sup: Supplier): Array<{ key: string; label: string }> => {
+    if (sup.supportingDocuments && sup.supportingDocuments.length > 0) {
+      return sup.supportingDocuments.map((d) => ({
+        key: `${d.docType}::${d.fileName}`,
+        label: `${d.docType} (${d.fileName})`,
+      }));
+    }
+    return (sup.documents || []).map((d) => {
+      const docType = d.category || 'KYC Document';
+      return {
+        key: `${docType}::${d.name}`,
+        label: `${docType} (${d.name})`,
+      };
+    });
+  };
+
+  const oldDocs = getSupplierDocItems(oldSup);
+  const newDocs = getSupplierDocItems(newSup);
+
+  const oldCounts = new Map<string, number>();
+  oldDocs.forEach((d) => oldCounts.set(d.key, (oldCounts.get(d.key) || 0) + 1));
+
+  const newCounts = new Map<string, number>();
+  newDocs.forEach((d) => newCounts.set(d.key, (newCounts.get(d.key) || 0) + 1));
+
+  const addedLabels: string[] = [];
+  newDocs.forEach((d) => {
+    const prevCount = oldCounts.get(d.key) || 0;
+    if (prevCount > 0) {
+      oldCounts.set(d.key, prevCount - 1);
+    } else {
+      addedLabels.push(d.label);
+    }
+  });
+
+  const removedLabels: string[] = [];
+  oldDocs.forEach((d) => {
+    const nextCount = newCounts.get(d.key) || 0;
+    if (nextCount > 0) {
+      newCounts.set(d.key, nextCount - 1);
+    } else {
+      removedLabels.push(d.label);
+    }
+  });
+
+  if (addedLabels.length > 0) {
     changes.push({
-      field: 'KYC Documents',
-      oldValue: `${oldDocsCount} File${oldDocsCount === 1 ? '' : 's'}`,
-      newValue: `${newDocsCount} File${newDocsCount === 1 ? '' : 's'}`,
+      field: 'Attached Supporting Documents',
+      oldValue: `${oldDocs.length} File${oldDocs.length === 1 ? '' : 's'}`,
+      newValue: addedLabels.join(', '),
+    });
+  }
+
+  if (removedLabels.length > 0) {
+    changes.push({
+      field: 'Removed Supporting Documents',
+      oldValue: removedLabels.join(', '),
+      newValue: `${newDocs.length} File${newDocs.length === 1 ? '' : 's'} remaining`,
     });
   }
 

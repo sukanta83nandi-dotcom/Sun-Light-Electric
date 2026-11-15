@@ -1,5 +1,15 @@
 import { AuditLogEntry } from '../types';
 
+export interface SupportingDocumentItem {
+  id?: string;
+  docType: string;
+  fileName: string;
+  fileUrl: string;
+  uploadedAt: string;
+  size?: string;
+  type?: string;
+}
+
 export interface SupplierDocument {
   id: string;
   name: string;
@@ -30,6 +40,7 @@ export interface Supplier {
   balancePayable: number;        // ₹ Outstanding dues to supplier
   status?: 'active' | 'inactive';
   documents?: SupplierDocument[];
+  supportingDocuments?: SupportingDocumentItem[];
   auditHistory?: AuditLogEntry[];
 }
 

@@ -11,8 +11,11 @@ import {
   CreditCard,
   Landmark,
   X,
+  ArrowLeft,
   Plus,
   Check,
+  CheckSquare,
+  Square,
   Paperclip,
   UploadCloud,
   Trash2,
@@ -26,6 +29,13 @@ import {
   ShieldCheck,
   ShieldAlert,
 } from 'lucide-react';
+import { DocumentViewerModal } from './DocumentViewerModal';
+import {
+  registerRawFile,
+  getRawFile,
+  createSafeBlobUrl,
+  revokeSafeBlobUrl,
+} from '../utils/blobHelper';
 
 interface AddSupplierModalProps {
   isOpen: boolean;
@@ -85,19 +95,20 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
   const [ifscCode, setIfscCode] = useState('');
 
   // Supporting Documents & KYC state
+  const [selectedDocTypes, setSelectedDocTypes] = useState<string[]>([]);
   const [uploadedDocs, setUploadedDocs] = useState<SupplierDocument[]>([]);
-  const [docCategory, setDocCategory] = useState<string>('GST Certificate');
-  const [isDragging, setIsDragging] = useState(false);
+  const [draggingDocType, setDraggingDocType] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<SupplierDocument | null>(null);
   const [docValidationError, setDocValidationError] = useState<boolean>(false);
   const [showDocWarningModal, setShowDocWarningModal] = useState<boolean>(false);
   const [shakeKey, setShakeKey] = useState<number>(0);
-  const docInputRef = useRef<HTMLInputElement>(null);
+  const slotInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const docSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setDocValidationError(false);
     setShowDocWarningModal(false);
+    setDraggingDocType(null);
     if (editingSupplier) {
       setSupplierCode(editingSupplier.supplierCode);
       setCompanyName(editingSupplier.companyName);
@@ -116,7 +127,32 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
       setBankName(editingSupplier.bankDetails?.bankName || '');
       setAccountNo(editingSupplier.bankDetails?.accountNo || '');
       setIfscCode(editingSupplier.bankDetails?.ifscCode || '');
-      setUploadedDocs(editingSupplier.documents ? [...editingSupplier.documents] : []);
+
+      const rawDocs: SupplierDocument[] =
+        editingSupplier.documents && editingSupplier.documents.length > 0
+          ? editingSupplier.documents
+          : (editingSupplier.supportingDocuments || []).map((sd, idx) => ({
+              id: sd.id || `DOC-${Date.now()}-${idx}`,
+              name: sd.fileName,
+              category: sd.docType,
+              size: sd.size || 'Stored',
+              type: sd.type || 'application/octet-stream',
+              uploadedAt: sd.uploadedAt,
+              dataUrl: sd.fileUrl,
+            }));
+
+      const normalizedDocs = rawDocs.map((d) => ({
+        ...d,
+        category:
+          d.category && KYC_DOCUMENT_TYPES.includes(d.category)
+            ? d.category
+            : 'Other KYC Document',
+      }));
+      setUploadedDocs(normalizedDocs);
+      const uniqueTypes = Array.from(
+        new Set(normalizedDocs.map((d) => d.category || 'Other KYC Document'))
+      );
+      setSelectedDocTypes(uniqueTypes);
     } else {
       const nextNum = String(existingSuppliersCount + 1).padStart(3, '0');
       setSupplierCode(`SUP-2026-${nextNum}`);
@@ -137,12 +173,38 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
       setAccountNo('');
       setIfscCode('');
       setUploadedDocs([]);
+      setSelectedDocTypes([]);
     }
   }, [editingSupplier, existingSuppliersCount, isOpen]);
 
   if (!isOpen) return null;
 
-  const handleFileUpload = (files: FileList | null) => {
+  const handleToggleDocType = (docType: string) => {
+    setSelectedDocTypes((prev) => {
+      if (prev.includes(docType)) {
+        // Unticking removes its upload slot and attached files for that docType cleanly
+        setUploadedDocs((docs) => docs.filter((d) => d.category !== docType));
+        return prev.filter((t) => t !== docType);
+      }
+      return [...prev, docType];
+    });
+  };
+
+  const handleToggleSelectAllDocTypes = () => {
+    if (selectedDocTypes.length === KYC_DOCUMENT_TYPES.length) {
+      setSelectedDocTypes([]);
+      setUploadedDocs([]);
+    } else {
+      setSelectedDocTypes([...KYC_DOCUMENT_TYPES]);
+    }
+  };
+
+  const handleClearDocTypes = () => {
+    setSelectedDocTypes([]);
+    setUploadedDocs([]);
+  };
+
+  const handleFileUploadForDocType = (files: FileList | null, targetDocType: string) => {
     if (!files || files.length === 0) return;
 
     const validFiles: File[] = [];
@@ -165,10 +227,13 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
             ? `${(file.size / 1024).toFixed(0)} KB`
             : `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
 
+        const newDocId = `DOC-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        registerRawFile(newDocId, file);
+
         const newDoc: SupplierDocument = {
-          id: `DOC-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-          name: `${docCategory} - ${file.name}`,
-          category: docCategory,
+          id: newDocId,
+          name: `${targetDocType} - ${file.name}`,
+          category: targetDocType,
           size: sizeFormatted,
           type: file.type || 'application/octet-stream',
           uploadedAt: new Date().toISOString().split('T')[0],
@@ -182,8 +247,9 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
       reader.readAsDataURL(file);
     });
 
-    if (docInputRef.current) {
-      docInputRef.current.value = '';
+    const inputEl = slotInputRefs.current[targetDocType];
+    if (inputEl) {
+      inputEl.value = '';
     }
   };
 
@@ -196,28 +262,35 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
       alert(`File content for "${doc.name}" is not locally stored.`);
       return;
     }
+    const blobUrl = createSafeBlobUrl(
+      doc.dataUrl,
+      doc.type,
+      getRawFile(doc.id),
+      doc.name
+    );
     const link = document.createElement('a');
-    link.href = doc.dataUrl;
+    link.href = blobUrl;
     link.download = doc.name;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => revokeSafeBlobUrl(blobUrl, doc.dataUrl), 1000);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
+  const handleSlotDragOver = (e: React.DragEvent, docType: string) => {
     e.preventDefault();
-    setIsDragging(true);
+    setDraggingDocType(docType);
   };
 
-  const handleDragLeave = () => {
-    setIsDragging(false);
+  const handleSlotDragLeave = (docType: string) => {
+    setDraggingDocType((prev) => (prev === docType ? null : prev));
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleSlotDrop = (e: React.DragEvent, docType: string) => {
     e.preventDefault();
-    setIsDragging(false);
+    setDraggingDocType(null);
     if (e.dataTransfer.files) {
-      handleFileUpload(e.dataTransfer.files);
+      handleFileUploadForDocType(e.dataTransfer.files, docType);
     }
   };
 
@@ -241,6 +314,16 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
       ? (customCategoryText.trim() || 'Solar Panels')
       : categorySupplied;
 
+    const supportingDocuments = uploadedDocs.map((doc) => ({
+      id: doc.id,
+      docType: doc.category || 'Other KYC Document',
+      fileName: doc.name,
+      fileUrl: doc.dataUrl || '',
+      uploadedAt: doc.uploadedAt || new Date().toISOString().split('T')[0],
+      size: doc.size,
+      type: doc.type,
+    }));
+
     const supplierData: Supplier = {
       id: editingSupplier ? editingSupplier.id : `SUP-${Date.now().toString().slice(-4)}`,
       supplierCode: supplierCode.trim() || `SUP-2026-${String(existingSuppliersCount + 1).padStart(3, '0')}`,
@@ -261,6 +344,7 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
       balancePayable: Number(balancePayable) || 0,
       status,
       documents: uploadedDocs,
+      supportingDocuments,
     };
 
     onSave(supplierData);
@@ -268,40 +352,49 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl my-6 animate-in fade-in zoom-in-95 duration-200">
-        
-        {/* Modal Header */}
-        <div className="bg-gradient-to-r from-sky-950 via-slate-900 to-sky-950 text-white p-5 flex items-center justify-between border-b border-sky-800/80">
-          <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-2xl border border-amber-500/40">
-              <Building2 className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-extrabold text-base text-white tracking-tight">
-                {editingSupplier ? 'Edit Solar Equipment Supplier' : 'Register New Solar Equipment Supplier'}
-              </h3>
-              <p className="text-xs text-sky-200/80 font-medium">
-                Sun Light Electric • Procurement &amp; Vendor Management
-              </p>
-            </div>
+    <div className="w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden animate-in fade-in duration-150">
+      {/* Top Dark Teal Gradient Header Bar */}
+      <div className="bg-gradient-to-r from-[#0b3b48] to-[#134e63] text-white px-6 py-4 rounded-t-2xl flex flex-wrap items-center justify-between gap-3 border-b border-[#1b5d74]">
+        <div className="flex items-center space-x-3">
+          <div className="p-2.5 bg-amber-500/20 text-amber-300 rounded-xl border border-amber-400/40 shrink-0">
+            <Building2 className="w-5 h-5" />
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 hover:bg-white/10 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div>
+            <h3 className="font-extrabold text-base sm:text-lg text-white tracking-tight">
+              {editingSupplier ? 'Edit Supplier Details' : 'Register New Solar Equipment Supplier'}
+            </h3>
+            <p className="text-xs text-teal-100/80 font-medium">
+              Sun Light Electric • Procurement &amp; Vendor Management
+            </p>
+          </div>
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white font-bold text-xs border border-teal-200/35 shadow-sm transition-all cursor-pointer"
+        >
+          <ArrowLeft className="w-3.5 h-3.5 text-teal-200" />
+          <span>Back to Supplier Directory</span>
+        </button>
+      </div>
 
-        {/* Modal Form */}
-        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-5 text-xs text-slate-700 dark:text-slate-200 max-h-[80vh] overflow-y-auto">
-          
-          {/* Section 1: Company & Code */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {/* Full-Width Inline Form (No Nested Scrollbars) */}
+      <form onSubmit={handleSubmit} className="p-5 sm:p-7 space-y-6 text-xs text-slate-700 dark:text-slate-200">
+        {/* Section 1: Basic, Contact & Tax Details */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white text-sm">
+              <Building2 className="w-4 h-4 text-[#134e63] dark:text-amber-400" />
+              <span>Vendor Profile, Contact &amp; Tax Details</span>
+            </div>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              Fields marked <span className="text-rose-500 font-bold">*</span> are required
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                 Supplier Code / ID
               </label>
               <input
@@ -313,8 +406,8 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
               />
             </div>
 
-            <div className="sm:col-span-2">
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                 Company / Vendor Name <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
@@ -329,12 +422,9 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
                 />
               </div>
             </div>
-          </div>
 
-          {/* Section 2: Contact Person, Phone, Email */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                 Contact Person
               </label>
               <div className="relative">
@@ -350,7 +440,7 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                 Phone / WhatsApp <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
@@ -367,7 +457,7 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                 Email Address
               </label>
               <div className="relative">
@@ -381,12 +471,9 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
                 />
               </div>
             </div>
-          </div>
 
-          {/* Section 3: GSTIN, Category Supplied, Payment Terms */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                 GSTIN (Tax ID)
               </label>
               <div className="relative">
@@ -403,14 +490,14 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center justify-between mb-1.5">
                 <label className="block font-bold text-slate-700 dark:text-slate-300">
                   Category Supplied
                 </label>
                 <button
                   type="button"
                   onClick={() => setIsCustomCategory(!isCustomCategory)}
-                  className="text-[10px] text-amber-600 dark:text-amber-400 font-bold hover:underline"
+                  className="text-[10px] text-amber-600 dark:text-amber-400 font-bold hover:underline cursor-pointer"
                 >
                   {isCustomCategory ? 'Pick Standard' : '+ Custom'}
                 </button>
@@ -440,7 +527,7 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                 Credit Period (Days)
               </label>
               <select
@@ -457,169 +544,165 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
                 <option value={60}>60 Days Credit</option>
               </select>
             </div>
-          </div>
 
-          {/* Section 4: Address & State */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                State
+              </label>
+              <select
+                value={state}
+                onChange={(e) => setState(e.target.value)}
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl font-medium focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
+              >
+                {INDIAN_STATES.map((s) => (
+                  <option key={s.stateCode} value={s.state}>
+                    {s.state} ({s.stateCode})
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="sm:col-span-2">
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                 Office / Godown Address
               </label>
               <div className="relative">
                 <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                <textarea
-                  rows={2}
+                <input
+                  type="text"
                   placeholder="Street address, Industrial area, City, Pincode"
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl font-medium focus:ring-2 focus:ring-amber-500 focus:outline-none resize-none"
+                  className="w-full pl-9 pr-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl font-medium focus:ring-2 focus:ring-amber-500 focus:outline-none"
                 />
               </div>
             </div>
 
-            <div className="space-y-3">
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  State
-                </label>
-                <select
-                  value={state}
-                  onChange={(e) => setState(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl font-medium focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
-                >
-                  {INDIAN_STATES.map((s) => (
-                    <option key={s.stateCode} value={s.state}>
-                      {s.state} ({s.stateCode})
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                Supplier Status
+              </label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as 'active' | 'inactive')}
+                className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl font-semibold focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          </div>
+        </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Supplier Status
-                </label>
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as 'active' | 'inactive')}
-                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl font-semibold focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </div>
+        {/* Section 2: Supplier Settlement & Bank Transfer Details */}
+        <div className="p-5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-2xl space-y-4">
+          <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-slate-700">
+            <div className="flex items-center space-x-2 font-bold text-sm text-slate-900 dark:text-white">
+              <Landmark className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span>Supplier Settlement &amp; Bank Transfer Details</span>
+            </div>
+            <span className="text-[10px] uppercase font-mono font-extrabold text-slate-500">
+              NEFT / RTGS Ready
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                Bank Name
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. HDFC Bank, SBI"
+                value={bankName}
+                onChange={(e) => setBankName(e.target.value)}
+                className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                Account Number
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. 50200089765432"
+                value={accountNo}
+                onChange={(e) => setAccountNo(e.target.value)}
+                className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                IFSC Code
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. HDFC0000014"
+                value={ifscCode}
+                onChange={(e) => setIfscCode(e.target.value.toUpperCase())}
+                className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl font-mono uppercase font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
+              />
             </div>
           </div>
 
-          {/* Section 5: Bank Details & Balance Payable Card */}
-          <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-2xl space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-700">
-              <div className="flex items-center space-x-2 font-bold text-slate-900 dark:text-white">
-                <Landmark className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span>Supplier Settlement &amp; Bank Transfer Details</span>
-              </div>
-              <span className="text-[10px] uppercase font-mono font-extrabold text-slate-500">
-                NEFT / RTGS Ready
+          {/* Outstanding Balance Payable */}
+          <div className="pt-3 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <span className="font-bold text-slate-800 dark:text-slate-200">
+                Current Balance Payable to Supplier (₹)
               </span>
+              <p className="text-[11px] text-slate-500">
+                Outstanding credit due for solar equipment dispatched to our Pursurah godown.
+              </p>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                  Bank Name
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. HDFC Bank, SBI"
-                  value={bankName}
-                  onChange={(e) => setBankName(e.target.value)}
-                  className="w-full p-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                  Account Number
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. 50200089765432"
-                  value={accountNo}
-                  onChange={(e) => setAccountNo(e.target.value)}
-                  className="w-full p-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                  IFSC Code
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. HDFC0000014"
-                  value={ifscCode}
-                  onChange={(e) => setIfscCode(e.target.value.toUpperCase())}
-                  className="w-full p-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl font-mono uppercase font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                />
-              </div>
+            <div className="flex items-center space-x-2 w-full sm:w-56">
+              <span className="font-mono font-bold text-slate-500 text-sm">₹</span>
+              <input
+                type="number"
+                min="0"
+                step="500"
+                value={balancePayable}
+                onChange={(e) => setBalancePayable(Number(e.target.value) || 0)}
+                className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl font-mono font-black text-rose-600 dark:text-rose-400 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+              />
             </div>
+          </div>
+        </div>
 
-            {/* Outstanding Balance Payable */}
-            <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        {/* Section 3: Supporting Documents & KYC Verification */}
+        <div
+          ref={docSectionRef}
+          key={`supplier-doc-section-${shakeKey}`}
+          className={`p-5 rounded-2xl space-y-4 transition-all duration-200 ${
+            docValidationError
+              ? 'bg-rose-50/50 dark:bg-rose-950/25 border-2 border-rose-500 ring-4 ring-rose-500/20 animate-shake'
+              : 'bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80'
+          }`}
+        >
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200 dark:border-slate-700">
+            <div className="flex items-center space-x-2.5">
+              <div
+                className={`p-2 rounded-lg ${
+                  docValidationError
+                    ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
+                    : 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                }`}
+              >
+                <Paperclip className="w-4 h-4" />
+              </div>
               <div>
-                <span className="font-bold text-slate-800 dark:text-slate-200">
-                  Current Balance Payable to Supplier (₹)
-                </span>
-                <p className="text-[11px] text-slate-500">
-                  Outstanding credit due for solar equipment dispatched to our Pursurah godown.
+                <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-1.5">
+                  <span>Supporting Documents &amp; KYC Verification</span>
+                  <span className="text-rose-500 font-black text-sm leading-none">*</span>
+                </h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Tick required KYC categories below and attach PDF/JPG/PNG documents across each slot
                 </p>
               </div>
-              <div className="flex items-center space-x-1.5 w-44">
-                <span className="font-mono font-bold text-slate-500">₹</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="500"
-                  value={balancePayable}
-                  onChange={(e) => setBalancePayable(Number(e.target.value) || 0)}
-                  className="w-full p-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl font-mono font-black text-rose-600 dark:text-rose-400 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                />
-              </div>
             </div>
-          </div>
-
-          {/* Section 6: Supporting Documents & KYC Verification */}
-          <div
-            ref={docSectionRef}
-            key={`supplier-doc-section-${shakeKey}`}
-            className={`p-4 rounded-2xl space-y-3.5 transition-all duration-200 ${
-              docValidationError
-                ? 'bg-rose-50/50 dark:bg-rose-950/25 border-2 border-rose-500 ring-4 ring-rose-500/20 animate-shake'
-                : 'bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80'
-            }`}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-700">
-              <div className="flex items-center space-x-2.5">
-                <div
-                  className={`p-1.5 rounded-lg ${
-                    docValidationError
-                      ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
-                      : 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
-                  }`}
-                >
-                  <Paperclip className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-slate-900 dark:text-white text-xs flex items-center gap-1.5">
-                    <span>Supporting Documents &amp; KYC Verification</span>
-                    <span className="text-rose-500 font-black text-sm leading-none">*</span>
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Upload GST Certificate, MSME/Udyam, Cancelled Cheque, and Trade License
-                  </p>
-                </div>
-              </div>
 
               {docValidationError ? (
                 <span className="text-[10px] uppercase font-black px-2.5 py-1 rounded-full bg-rose-600 text-white animate-pulse flex items-center gap-1 shadow-xs">
@@ -628,13 +711,13 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
                 </span>
               ) : (
                 <span
-                  className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full font-mono ${
+                  className={`text-[10px] uppercase font-bold px-2.5 py-0.5 rounded-full font-mono ${
                     uploadedDocs.length > 0
                       ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
                       : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
                   }`}
                 >
-                  {uploadedDocs.length} {uploadedDocs.length === 1 ? 'Doc Attached' : 'Docs Attached'}
+                  {uploadedDocs.length} {uploadedDocs.length === 1 ? 'DOC ATTACHED' : 'DOCS ATTACHED'}
                 </span>
               )}
             </div>
@@ -653,161 +736,237 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
                     </span>
                   </div>
                   <p className="text-xs leading-relaxed font-semibold text-rose-900 dark:text-rose-100">
-                    Cannot register supplier without KYC documentation! Please attach at least one valid supporting document (e.g., GST Certificate, Cancelled Cheque, or MSME/Trade License).
+                    Cannot register supplier without KYC documentation! Please tick at least one document type below and attach a valid supporting file (e.g., GST Certificate, Cancelled Cheque, or PAN Card).
                   </p>
                 </div>
               </div>
             )}
 
-            {/* Document Type Selector & Upload Zone */}
+            {/* Multi-Select Tick Mark Checklist */}
             <div className="space-y-2.5">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 shrink-0">
-                  Document Type to Attach:
-                </label>
-                <select
-                  value={docCategory}
-                  onChange={(e) => setDocCategory(e.target.value)}
-                  className="flex-1 p-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-medium focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
-                >
-                  {KYC_DOCUMENT_TYPES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                    Select Document Types to Attach ({selectedDocTypes.length}/{KYC_DOCUMENT_TYPES.length} Selected):
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {selectedDocTypes.length > 0 && selectedDocTypes.length < KYC_DOCUMENT_TYPES.length && (
+                    <button
+                      type="button"
+                      onClick={handleClearDocTypes}
+                      className="text-[11px] font-bold text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 px-2 py-1 rounded-lg hover:bg-slate-200/70 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleToggleSelectAllDocTypes}
+                    className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-amber-700 dark:text-amber-400 hover:border-amber-500 hover:bg-amber-50/50 dark:hover:bg-amber-950/30 transition-all cursor-pointer"
+                  >
+                    {selectedDocTypes.length === KYC_DOCUMENT_TYPES.length ? 'Clear All' : 'Select All / Clear'}
+                  </button>
+                </div>
               </div>
 
-              {/* Drag and Drop Zone */}
-              <div
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => docInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all ${
-                  docValidationError
-                    ? 'border-rose-400 bg-rose-50/40 dark:bg-rose-950/30'
-                    : isDragging
-                    ? 'border-amber-500 bg-amber-50/30 dark:bg-amber-950/20 scale-[0.99]'
-                    : 'border-slate-300 dark:border-slate-700 hover:border-amber-400 bg-white/70 dark:bg-slate-900/50 hover:bg-amber-50/20'
-                }`}
-              >
-                <input
-                  type="file"
-                  ref={docInputRef}
-                  onChange={(e) => handleFileUpload(e.target.files)}
-                  multiple
-                  accept=".pdf, .jpg, .jpeg, .png, .webp, image/*, application/pdf"
-                  className="hidden"
-                />
-                <div className="flex flex-col items-center justify-center space-y-1.5">
-                  <div
-                    className={`p-2.5 rounded-full ${
-                      docValidationError
-                        ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 animate-bounce'
-                        : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                    }`}
-                  >
-                    <UploadCloud className="w-5 h-5" />
-                  </div>
-                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    Click to browse or drag &amp; drop files here
-                  </div>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                    Attach <span className="font-semibold text-amber-600 dark:text-amber-400">{docCategory}</span> (PDF, JPG, PNG up to 10MB each)
-                  </p>
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {KYC_DOCUMENT_TYPES.map((docType) => {
+                  const isChecked = selectedDocTypes.includes(docType);
+                  const countForType = uploadedDocs.filter((d) => d.category === docType).length;
+
+                  return (
+                    <button
+                      key={docType}
+                      type="button"
+                      role="checkbox"
+                      aria-checked={isChecked}
+                      onClick={() => handleToggleDocType(docType)}
+                      className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        isChecked
+                          ? 'border-amber-500 bg-amber-50/60 dark:border-amber-500 dark:bg-amber-950/30 text-slate-900 dark:text-white shadow-2xs'
+                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:border-amber-300 dark:hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {isChecked ? (
+                          <CheckSquare className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-400 shrink-0" />
+                        )}
+                        <span className={`text-xs truncate ${isChecked ? 'font-bold' : 'font-medium'}`}>
+                          {docType}
+                        </span>
+                      </div>
+
+                      {countForType > 0 && (
+                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 shrink-0">
+                          {countForType} {countForType === 1 ? 'file' : 'files'}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Uploaded Documents List */}
-            {uploadedDocs.length === 0 ? (
-              <div className="flex items-center space-x-2 p-3 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40 rounded-xl text-[11px] text-amber-800 dark:text-amber-300">
+            {/* Dedicated Per-Document Upload Slots */}
+            {selectedDocTypes.length === 0 ? (
+              <div className="flex items-center space-x-2 p-3.5 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/70 dark:border-amber-900/40 rounded-xl text-[11px] text-amber-800 dark:text-amber-300">
                 <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
                 <span>
-                  No documents attached yet. Uploading GST Certificate, Cancelled Cheque &amp; MSME ensures valid accounting audit trail.
+                  Tick one or more document types above (e.g., GST Certificate, Cancelled Cheque, PAN Card) to open dedicated upload slots and attach multiple files.
                 </span>
               </div>
             ) : (
-              <div className="space-y-2 pt-1">
+              <div className="space-y-3 pt-1">
                 <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                  <span>Attached Supplier Documents ({uploadedDocs.length}):</span>
-                  <span className="text-[10px] text-slate-400 font-normal">Click preview to view</span>
+                  <span>Upload Slots for Selected Document Types ({selectedDocTypes.length}):</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Supports multiple PDF/JPG/PNG files per slot</span>
                 </div>
-                <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
-                  {uploadedDocs.map((doc) => {
-                    const isPdf = doc.type?.includes('pdf') || doc.name.toLowerCase().endsWith('.pdf');
-                    const isImage = doc.type?.includes('image') || /\.(jpg|jpeg|png|webp|svg)$/i.test(doc.name);
+
+                <div className={`grid gap-3.5 ${selectedDocTypes.length === 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'}`}>
+                  {selectedDocTypes.map((docType) => {
+                    const slotDocs = uploadedDocs.filter((d) => d.category === docType);
+                    const isSlotDragging = draggingDocType === docType;
 
                     return (
                       <div
-                        key={doc.id}
-                        className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl hover:border-slate-300 dark:hover:border-slate-600 transition-colors shadow-2xs group"
+                        key={docType}
+                        onDragOver={(e) => handleSlotDragOver(e, docType)}
+                        onDragLeave={() => handleSlotDragLeave(docType)}
+                        onDrop={(e) => handleSlotDrop(e, docType)}
+                        className={`p-3 rounded-2xl border transition-all space-y-2.5 ${
+                          isSlotDragging
+                            ? 'border-amber-500 bg-amber-50/50 dark:bg-amber-950/30 ring-2 ring-amber-400/40'
+                            : slotDocs.length > 0
+                            ? 'border-emerald-300/80 dark:border-emerald-800/70 bg-white dark:bg-slate-900'
+                            : 'border-dashed border-slate-300 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70'
+                        }`}
                       >
-                        <div className="flex items-center space-x-2.5 min-w-0 flex-1 mr-2">
-                          <div
-                            className={`p-2 rounded-lg shrink-0 ${
-                              isPdf
-                                ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
-                                : isImage
-                                ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
-                                : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                            }`}
-                          >
-                            {isPdf ? (
-                              <FileText className="w-4 h-4" />
-                            ) : isImage ? (
-                              <ImageIcon className="w-4 h-4" />
-                            ) : (
-                              <File className="w-4 h-4" />
-                            )}
+                        {/* Hidden Multi-file Input per Document Type */}
+                        <input
+                          type="file"
+                          ref={(el) => {
+                            slotInputRefs.current[docType] = el;
+                          }}
+                          onChange={(e) => handleFileUploadForDocType(e.target.files, docType)}
+                          multiple
+                          accept=".pdf, .jpg, .jpeg, .png, .webp, image/*, application/pdf"
+                          className="hidden"
+                        />
+
+                        {/* Slot Header Row */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0">
+                              <CheckSquare className="w-3.5 h-3.5" />
+                            </span>
+                            <div className="min-w-0">
+                              <div className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                                {docType}
+                              </div>
+                              <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                                {slotDocs.length > 0
+                                  ? `${slotDocs.length} file${slotDocs.length === 1 ? '' : 's'} tagged as ${docType}`
+                                  : 'Drag & drop or click browse to attach PDF/JPG/PNG (max 10MB)'}
+                              </div>
+                            </div>
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono">
-                                {doc.category || 'KYC Doc'}
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {slotDocs.length > 0 && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                <CheckCircle2 className="w-3 h-3" />
+                                Attached
                               </span>
-                              <span className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-[240px] sm:max-w-xs" title={doc.name}>
-                                {doc.name}
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                              {doc.size} {doc.uploadedAt && `• Added on ${doc.uploadedAt}`}
-                            </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => slotInputRefs.current[docType]?.click()}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-400/50 transition-all active:scale-95 cursor-pointer"
+                            >
+                              <UploadCloud className="w-3.5 h-3.5" />
+                              <span>{slotDocs.length > 0 ? '+ Add More' : 'Attach File(s)'}</span>
+                            </button>
                           </div>
                         </div>
 
-                        {/* Document Actions */}
-                        <div className="flex items-center space-x-1 shrink-0">
-                          {doc.dataUrl && (
-                            <button
-                              type="button"
-                              onClick={() => setPreviewDoc(doc)}
-                              className="p-1.5 text-slate-500 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                              title="Preview Document"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          {doc.dataUrl && (
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadDoc(doc)}
-                              className="p-1.5 text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                              title="Download Document"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveDoc(doc.id)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                            title="Delete Document"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        {/* Attached Files inside this Slot */}
+                        {slotDocs.length > 0 && (
+                          <div className="space-y-1.5 pt-1 border-t border-slate-100 dark:border-slate-800">
+                            {slotDocs.map((doc) => {
+                              const isPdf = doc.type?.includes('pdf') || doc.name.toLowerCase().endsWith('.pdf');
+                              const isImage = doc.type?.includes('image') || /\.(jpg|jpeg|png|webp|svg)$/i.test(doc.name);
+
+                              return (
+                                <div
+                                  key={doc.id}
+                                  className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl"
+                                >
+                                  <div className="flex items-center space-x-2 min-w-0 flex-1 mr-2">
+                                    <div
+                                      className={`p-1.5 rounded-lg shrink-0 ${
+                                        isPdf
+                                          ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                                          : isImage
+                                          ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                                          : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                                      }`}
+                                    >
+                                      {isPdf ? (
+                                        <FileText className="w-3.5 h-3.5" />
+                                      ) : isImage ? (
+                                        <ImageIcon className="w-3.5 h-3.5" />
+                                      ) : (
+                                        <File className="w-3.5 h-3.5" />
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-[11px] font-bold text-slate-900 dark:text-white truncate" title={doc.name}>
+                                        {doc.name}
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 font-mono">
+                                        {doc.size} {doc.uploadedAt && `• ${doc.uploadedAt}`}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center space-x-1 shrink-0">
+                                    {doc.dataUrl && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setPreviewDoc(doc)}
+                                        className="p-1.5 text-slate-500 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                        title="Preview Document"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                    {doc.dataUrl && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDownloadDoc(doc)}
+                                        className="p-1.5 text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                        title="Download Document"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveDoc(doc.id)}
+                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                      title="Remove File"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -816,94 +975,38 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
             )}
           </div>
 
-          {/* Action Footer */}
-          <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end space-x-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-6 py-2.5 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-slate-950 font-black rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer flex items-center space-x-2"
-            >
-              <Check className="w-4 h-4 stroke-[3]" />
-              <span>{editingSupplier ? 'Update Supplier Profile' : 'Save & Register Supplier'}</span>
-            </button>
+          {/* Bottom Action Footer */}
+          <div className="pt-5 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <span>Fields marked * and at least 1 KYC supporting document are mandatory</span>
+            </div>
+            <div className="flex items-center gap-3 ml-auto">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-6 py-2.5 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-slate-950 font-black rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer flex items-center space-x-2"
+              >
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>{editingSupplier ? 'Update Supplier' : 'Save & Register Supplier'}</span>
+              </button>
+            </div>
           </div>
 
         </form>
 
-        {/* In-Modal Document Lightbox Preview */}
+        {/* Safe Blob URL Document Lightbox Preview */}
         {previewDoc && (
-          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 z-60 animate-in fade-in">
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-              <div className="p-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
-                <div className="flex items-center space-x-2.5 min-w-0">
-                  <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl">
-                    <Paperclip className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <h4 className="font-bold text-sm text-white truncate max-w-md">
-                      {previewDoc.name}
-                    </h4>
-                    <p className="text-[10px] text-slate-400 font-mono">
-                      {previewDoc.category} • {previewDoc.size}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <button
-                    type="button"
-                    onClick={() => handleDownloadDoc(previewDoc)}
-                    className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer transition-colors"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Download</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewDoc(null)}
-                    className="p-1.5 hover:bg-white/10 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-4 flex-1 overflow-auto flex items-center justify-center bg-slate-100 dark:bg-slate-950 min-h-[300px]">
-                {previewDoc.type?.includes('image') || /\.(jpg|jpeg|png|webp|svg)$/i.test(previewDoc.name) ? (
-                  <img
-                    src={previewDoc.dataUrl}
-                    alt={previewDoc.name}
-                    className="max-h-[70vh] max-w-full object-contain rounded-xl shadow-lg"
-                  />
-                ) : previewDoc.type?.includes('pdf') || previewDoc.name.toLowerCase().endsWith('.pdf') ? (
-                  <iframe
-                    src={previewDoc.dataUrl}
-                    title={previewDoc.name}
-                    className="w-full h-[65vh] rounded-xl border border-slate-300 dark:border-slate-800 bg-white"
-                  />
-                ) : (
-                  <div className="text-center p-6 space-y-3">
-                    <FileText className="w-12 h-12 text-slate-400 mx-auto" />
-                    <p className="text-xs text-slate-600 dark:text-slate-300 font-semibold">
-                      Direct preview is not supported for this file type.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => handleDownloadDoc(previewDoc)}
-                      className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl"
-                    >
-                      Download to view file
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <DocumentViewerModal
+            document={previewDoc}
+            onClose={() => setPreviewDoc(null)}
+          />
         )}
 
         {/* Mandatory Supporting Document Required Warning Modal Popup */}
@@ -932,8 +1035,14 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
                     type="button"
                     onClick={() => {
                       setShowDocWarningModal(false);
+                      const targetType = selectedDocTypes[0] || KYC_DOCUMENT_TYPES[0];
+                      if (!selectedDocTypes.includes(targetType)) {
+                        setSelectedDocTypes((prev) => [...prev, targetType]);
+                      }
                       docSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      docInputRef.current?.click();
+                      setTimeout(() => {
+                        slotInputRefs.current[targetType]?.click();
+                      }, 120);
                     }}
                     className="w-full py-2.5 px-4 bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center space-x-2"
                   >
@@ -954,6 +1063,5 @@ export const AddSupplierModal: React.FC<AddSupplierModalProps> = ({
         )}
 
       </div>
-    </div>
   );
 };

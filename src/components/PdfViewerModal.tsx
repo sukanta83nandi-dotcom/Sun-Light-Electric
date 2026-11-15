@@ -176,14 +176,29 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({ doc, onClose, la
             /* PDF Canvas Frame */
             pdfDataUrl ? (
               <div className="w-full h-[680px] relative rounded-xl overflow-hidden border border-slate-700 bg-white">
-                <iframe
-                  src={pdfDataUrl}
-                  className="w-full h-full border-0 block"
-                  title="Sun Light Electric PDF Document"
-                />
-                <div className="absolute bottom-3 right-3 bg-slate-900/90 text-slate-200 text-[11px] px-3 py-1.5 rounded-lg border border-slate-700 flex items-center space-x-2 shadow-lg backdrop-blur-sm">
-                  <span>PDF frame empty?</span>
+                <object
+                  data={pdfDataUrl}
+                  type="application/pdf"
+                  className="w-full h-full rounded-xl"
+                >
+                  <iframe
+                    src={pdfDataUrl}
+                    className="w-full h-full border-0 block"
+                    title="Sun Light Electric PDF Document"
+                  />
+                </object>
+                <div className="absolute bottom-3 right-3 bg-slate-900/90 text-slate-200 text-[11px] px-3 py-1.5 rounded-lg border border-slate-700 flex items-center space-x-2.5 shadow-lg backdrop-blur-sm">
+                  <span>Preview blocked?</span>
                   <button
+                    type="button"
+                    onClick={() => window.open(pdfDataUrl, '_blank', 'noopener,noreferrer')}
+                    className="text-sky-400 hover:text-sky-300 font-bold underline cursor-pointer"
+                  >
+                    Open in New Tab
+                  </button>
+                  <span className="text-slate-600">|</span>
+                  <button
+                    type="button"
                     onClick={() => setActiveView('html')}
                     className="text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
                   >

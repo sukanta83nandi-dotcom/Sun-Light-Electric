@@ -104,6 +104,7 @@ import {
   FileCheck2,
   Image as ImageIcon,
   ReceiptText,
+  Paperclip,
 } from 'lucide-react';
 import { downloadDocumentPdf } from '../utils/pdfGenerator';
 import { getWhatsAppDeepLinks, sendPaymentDueReminderWhatsApp } from '../utils/whatsappHelper';
@@ -182,6 +183,8 @@ export const DemoApp: React.FC<DemoAppProps> = ({
     } else if (tab === 'non-po-grn') {
       setNonPoGrnSubView('search');
     }
+    setShowCustomerFormModal(false);
+    setEditingCustomer(null);
     if (setActiveTabProp) setActiveTabProp(tab);
     setInternalActiveTab(tab);
   };
@@ -1072,11 +1075,13 @@ export const DemoApp: React.FC<DemoAppProps> = ({
   const handleOpenAddCustomer = () => {
     setEditingCustomer(null);
     setShowCustomerFormModal(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenEditCustomer = (customer: Customer) => {
     setEditingCustomer(customer);
     setShowCustomerFormModal(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSaveCustomerForm = (customerData: Customer, isEdit: boolean) => {
@@ -2703,8 +2708,23 @@ export const DemoApp: React.FC<DemoAppProps> = ({
         </Suspense>
       )}
 
-      {/* Tab 4: Customer Directory */}
+      {/* Tab 4: Customer Directory (or Full-Page Add/Edit Customer Form) */}
       {(activeTab === 'customers' || activeTab === 'clients') && (
+        showCustomerFormModal ? (
+          <Suspense fallback={<div className="p-12 text-center text-xs text-sky-600 dark:text-sky-300 font-extrabold animate-pulse">Loading Customer Form...</div>}>
+            <CustomerFormModal
+              isOpen={showCustomerFormModal}
+              initialCustomer={editingCustomer}
+              existingCustomers={customers}
+              onClose={() => {
+                setShowCustomerFormModal(false);
+                setEditingCustomer(null);
+              }}
+              onSave={handleSaveCustomerForm}
+              onPreviewDoc={(doc) => setViewingClientDoc(doc)}
+            />
+          </Suspense>
+        ) : (
         <div className="space-y-4">
           {/* Header Panel */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -3007,21 +3027,45 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                               {c.id}
                             </td>
 
-                            {/* 2. Customer Name + Contact Person (Sticky) */}
+                            {/* 2. Customer Name + Contact Person + Supporting Docs Paperclip Badge (Sticky) */}
                             <td
-                              className={`sticky left-[68px] z-10 ${stickyBgClass} border border-slate-200 dark:border-slate-700 px-3 py-2 min-w-[215px] max-w-[250px] shadow-[3px_0_6px_-2px_rgba(15,23,42,0.12)] align-top`}
+                              className={`sticky left-[68px] z-10 ${stickyBgClass} border border-slate-200 dark:border-slate-700 px-3 py-2 min-w-[230px] max-w-[270px] shadow-[3px_0_6px_-2px_rgba(15,23,42,0.12)] align-top`}
                             >
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEditCustomer(c)}
-                                className="text-[#1a6696] dark:text-sky-400 underline hover:text-blue-800 dark:hover:text-sky-300 font-semibold cursor-pointer text-left leading-snug break-words"
-                                title="Click to Edit / View Customer Profile"
-                              >
-                                {c.name}
-                              </button>
-                              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight">
-                                {c.contactPerson ? c.contactPerson : '—'}
-                              </div>
+                              {(() => {
+                                const docCount = c.supportingDocuments?.length
+                                  ? c.supportingDocuments.length
+                                  : (c.documents || []).length;
+                                return (
+                                  <>
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEditCustomer(c)}
+                                        className="text-[#1a6696] dark:text-sky-400 underline hover:text-blue-800 dark:hover:text-sky-300 font-semibold cursor-pointer text-left leading-snug break-words"
+                                        title="Click to Edit / View Customer Profile"
+                                      >
+                                        {c.name}
+                                      </button>
+                                      {docCount > 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setSelectedCustomerForDetails(c)}
+                                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/70 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-[10px] font-bold cursor-pointer transition-colors shrink-0"
+                                          title={`View or download ${docCount} attached supporting document${docCount === 1 ? '' : 's'}`}
+                                        >
+                                          <Paperclip className="w-2.5 h-2.5" />
+                                          <span>
+                                            {docCount} {docCount === 1 ? 'Doc' : 'Docs'}
+                                          </span>
+                                        </button>
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight">
+                                      {c.contactPerson ? c.contactPerson : '—'}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                             </td>
 
                             {/* 3. Last Invoice Dt. */}
@@ -3188,19 +3232,26 @@ export const DemoApp: React.FC<DemoAppProps> = ({
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedCustomerForDetails(c)}
-                                  className="relative min-w-[32px] min-h-[32px] flex items-center justify-center p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800 transition-colors cursor-pointer"
-                                  title={`KYC & Site Documents (${(c.documents || []).length})`}
-                                >
-                                  <FileText className="w-3.5 h-3.5" />
-                                  {(c.documents || []).length > 0 && (
-                                    <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-amber-500 text-slate-950 text-[9px] font-black flex items-center justify-center">
-                                      {(c.documents || []).length}
-                                    </span>
-                                  )}
-                                </button>
+                                {(() => {
+                                  const vaultDocCount = c.supportingDocuments?.length
+                                    ? c.supportingDocuments.length
+                                    : (c.documents || []).length;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedCustomerForDetails(c)}
+                                      className="relative min-w-[32px] min-h-[32px] flex items-center justify-center p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800 transition-colors cursor-pointer"
+                                      title={`KYC & Site Documents (${vaultDocCount})`}
+                                    >
+                                      <FileText className="w-3.5 h-3.5" />
+                                      {vaultDocCount > 0 && (
+                                        <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-amber-500 text-slate-950 text-[9px] font-black flex items-center justify-center">
+                                          {vaultDocCount}
+                                        </span>
+                                      )}
+                                    </button>
+                                  );
+                                })()}
                                 <button
                                   type="button"
                                   onClick={() => setHistoryCustomer(c)}
@@ -3221,6 +3272,7 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             );
           })()}
         </div>
+        )
       )}
 
       {/* Tab: Suppliers Directory */}
@@ -3371,23 +3423,6 @@ export const DemoApp: React.FC<DemoAppProps> = ({
             onClose={() => setPreviewDoc(null)}
             lang={lang}
             onConvertQuotation={handleConvertQuotationToInvoice}
-          />
-        </Suspense>
-      )}
-
-      {/* Add / Edit Customer Modal (4-Section ERP Master Form) */}
-      {showCustomerFormModal && (
-        <Suspense fallback={<div className="fixed inset-0 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 text-xs text-sky-300 font-bold">Loading Customer Form...</div>}>
-          <CustomerFormModal
-            isOpen={showCustomerFormModal}
-            initialCustomer={editingCustomer}
-            existingCustomers={customers}
-            onClose={() => {
-              setShowCustomerFormModal(false);
-              setEditingCustomer(null);
-            }}
-            onSave={handleSaveCustomerForm}
-            onPreviewDoc={(doc) => setViewingClientDoc(doc)}
           />
         </Suspense>
       )}
